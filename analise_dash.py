@@ -46,26 +46,47 @@ def get_custom_metrics(df: pd.DataFrame) -> pd.DataFrame:
         mock_df.sort_values(by='date', inplace=True)
         return mock_df
     
+def download_blob(blob, destination_path):
+    # Split the blob's name into directory parts and the file name
+    parts = blob.name.split('/')
+    file_name = parts[-1]
+    dirs = parts[:-1]
+    dirs = dirs[1:]
+
+    # Create subdirectories based on the blob's name
+    destination_dir = destination_path / '/'.join(dirs)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use the original file name without prefixes
+    destination_file_path = destination_dir / file_name  # Use 'file_name' directly
+
+    if not destination_file_path.is_file():
+        with open(destination_file_path, 'wb') as f:
+            blob.download_to_file(f)
+        return f"Downloaded: {blob.name}"
+    else:
+        return f"Skipped: {blob.name} (already exists)"
+
 def get_data_from_bucket(
         bucket_name: str,
         prefix: str | None = None,
-        destination_path: str = './Temp_files') -> pd.DataFrame:
+        destination_path: str = './Temp_files') -> bool:
     """
     Download all files from Google Cloud Storage Bucket (bucket_name) and save them in destination_path (local)
 
     Parameters
     ----------
-    path_to_key : str | Path
-        Path to .json file with the service key
     bucket_name : str
-    prefix: str|None
-    To limit blobs with a defined prefix
-    max_workers : int
-    number of parallelism workers
+        Name of the Google Cloud Storage Bucket
+    prefix : str | None
+        Prefix to limit blobs with a defined prefix
     destination_path : str | Path
+        Local destination path for downloaded files
+
     Returns
     -------
     bool
+        True if the operation is successful
     """
     destination_path = Path(destination_path)
     
@@ -82,33 +103,16 @@ def get_data_from_bucket(
     
     if not blobs:
         raise NoBlobsFoundError('No blobs found with the specific conditions...')
+    
     print('Inicio do download')
+    
+    # Download blobs without threading
+    results = [download_blob(blob, destination_path) for blob in blobs]
+    
+    print("All files downloaded successfully.")
+    
+    return True
 
-    def download_blob(blob, destination_path):
-        # Split the blob's name into directory parts and the file name
-        parts = blob.name.split('/')
-        file_name = parts[-1]
-        dirs = parts[:-1]
-        dirs = dirs[1:]
-    
-        # Create subdirectories based on the blob's name
-        destination_dir = destination_path / '/'.join(dirs)
-        destination_dir.mkdir(parents=True, exist_ok=True)
-    
-        # Use the original file name without prefixes
-        destination_file_path = destination_dir / file_name  # Use 'file_name' directly
-    
-        if not destination_file_path.is_file():
-            with open(destination_file_path, 'wb') as f:
-                blob.download_to_file(f)
-            return f"Downloaded: {blob.name}"
-        else:
-            f"Skipped: {blob.name} (already exists)"
-    
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(lambda blob: download_blob(blob, destination_path), blobs))
-        print("All files downloaded successfully.")
-        return True
 
 def datetime_to_milliseconds(dt, end=False):
     """

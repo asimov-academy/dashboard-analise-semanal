@@ -4,18 +4,12 @@ import plotly.express as px
 from pathlib import Path
 from google.cloud import storage
 from google.oauth2 import service_account
-import concurrent.futures
-import requests
-import json
-import os
-from datetime import datetime, timezone, timedelta
-import time
+from datetime import datetime, timedelta
 from millify import millify
 import numpy as np
-
+import plotly.graph_objects as go
 
 st.set_page_config(layout='wide')
-
 class NoBlobsFoundError(Exception):
     pass
 
@@ -67,6 +61,7 @@ def download_blob(blob, destination_path):
     else:
         return f"Skipped: {blob.name} (already exists)"
 
+@st.cache_data
 def get_data_from_bucket(
         bucket_name: str,
         prefix: str | None = None,
@@ -88,6 +83,7 @@ def get_data_from_bucket(
     bool
         True if the operation is successful
     """
+    st.write('Realizando o download dos dados')
     destination_path = Path(destination_path)
     
     if destination_path.is_dir():
@@ -137,6 +133,7 @@ try:
     st.session_state['Download_data']
 except KeyError:
     st.session_state['Download_data'] = get_data_from_bucket(bucket_name='dashboard_marketing_processed')
+
 
 ga4, fb = process_data()
 
@@ -274,9 +271,13 @@ with inner_5:
 map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Vendas totais':'n_purchase'}
 
 tmp = fb_data[['date', 'name', 'spend', 'n_purchase']].groupby(by=['date', 'name']).sum()
-tmp['CPA'] = tmp['spend'] / tmp['n_purchase']
-tmp = tmp.loc[tmp.index.get_level_values('name').isin(selected_adsets)]
+tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
+tmp = tmp.loc[tmp.index.get_level_values('name').isin(selected_adsets)]#.replace(np.inf, -1)
 
-hist_fig = px.line(data_frame=tmp, x=tmp.index.get_level_values('date'), y=map_option.get(option_2),
-                    color=tmp.index.get_level_values('name'), title=f'Evolução no tempo do {selected_adsets} em relação a métrica {option_2}')
+st.write(tmp)
+hist_fig = go.Figure()
+for name in tmp.index.get_level_values('name').unique():
+    aux = tmp.loc[tmp.index.get_level_values('name') == name]
+    hist_fig.add_trace(go.Scatter(x=aux.index.get_level_values('date'), y=aux[map_option.get(option_2)], mode='lines+markers', name=name))
+
 st.plotly_chart(hist_fig, use_container_width=True)

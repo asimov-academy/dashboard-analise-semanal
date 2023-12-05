@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from millify import millify
 import numpy as np
 import plotly.graph_objects as go
-
+from io import StringIO
 st.set_page_config(layout='wide')
 class NoBlobsFoundError(Exception):
     pass
@@ -40,83 +40,24 @@ def get_custom_metrics(df: pd.DataFrame) -> pd.DataFrame:
         mock_df.sort_values(by='date', inplace=True)
         return mock_df
     
-def download_blob(blob, destination_path):
-    # Split the blob's name into directory parts and the file name
-    parts = blob.name.split('/')
-    file_name = parts[-1]
-    dirs = parts[:-1]
-    dirs = dirs[1:]
-
-    # Create subdirectories based on the blob's name
-    destination_dir = destination_path / '/'.join(dirs)
-    destination_dir.mkdir(parents=True, exist_ok=True)
-
-    # Use the original file name without prefixes
-    destination_file_path = destination_dir / file_name  # Use 'file_name' directly
-
-    if not destination_file_path.is_file():
-        with open(destination_file_path, 'wb') as f:
-            blob.download_to_file(f)
-        return f"Downloaded: {blob.name}"
-    else:
-        return f"Skipped: {blob.name} (already exists)"
-
 @st.cache_data
-def get_data_from_bucket(
-        bucket_name: str,
-        prefix: str | None = None,
-        destination_path: str = './Temp_files') -> bool:
-    """
-    Download all files from Google Cloud Storage Bucket (bucket_name) and save them in destination_path (local)
-
-    Parameters
-    ----------
-    bucket_name : str
-        Name of the Google Cloud Storage Bucket
-    prefix : str | None
-        Prefix to limit blobs with a defined prefix
-    destination_path : str | Path
-        Local destination path for downloaded files
-
-    Returns
-    -------
-    bool
-        True if the operation is successful
-    """
-    st.write('Realizando o download dos dados')
-    destination_path = Path(destination_path)
-    
-    if destination_path.is_dir():
-        destination_path.mkdir(parents=True, exist_ok=True)
+def get_data_from_bucket(bucket_name: str) -> bool:
 
     credentials = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_STORAGE"])
     client = storage.Client(credentials=credentials)
     source_bucket_name = bucket_name
     bucket = client.bucket(source_bucket_name)
-    
-    blobs = bucket.list_blobs(prefix=prefix)
-    blobs = [blob for blob in blobs if blob.name != prefix]
-    
-    if not blobs:
-        raise NoBlobsFoundError('No blobs found with the specific conditions...')
-    
-    print('Inicio do download')
-    
-    # Download blobs without threading
-    results = [download_blob(blob, destination_path) for blob in blobs]
-    
-    print("All files downloaded successfully.")
-    
-    return True
+    blob = bucket.blob('processed_adsets.csv')
+    blob_content = blob.download_as_text()
+    return blob_content
 
 @st.cache_data
 def process_data():
-    temp_files = Path('./Temp_files')
-    ga4_data = pd.read_parquet(temp_files/'Processed_concat.parquet', engine='pyarrow')
-    fb_data = pd.read_csv(temp_files/'processed_adsets.csv')
+    tmp_file = get_data_from_bucket(bucket_name='dashboard_marketing_processed')
+    fb_data = pd.read_csv(StringIO(tmp_file))
     fb_data = get_custom_metrics(fb_data)
     fb = fb_data.loc[(fb_data['campaign_name'] == '[CONVERSAO] [DIP] Broad')].copy()
-    return ga4_data, fb
+    return fb
 
 @st.cache_data
 def group_data(df):
@@ -129,14 +70,8 @@ def group_data(df):
 
 ###################### GETTING THE DATA #########################################
 # DATA LOAD
-try: 
-    st.session_state['Download_data']
-except KeyError:
-    st.session_state['Download_data'] = get_data_from_bucket(bucket_name='dashboard_marketing_processed')
-
-
-ga4, fb = process_data()
-
+#Process
+fb = process_data()
 
 # FILTOS
 date_range = st.sidebar.date_input("Datas", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)))
@@ -274,7 +209,7 @@ tmp = fb_data[['date', 'name', 'spend', 'n_purchase']].groupby(by=['date', 'name
 tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
 tmp = tmp.loc[tmp.index.get_level_values('name').isin(selected_adsets)]#.replace(np.inf, -1)
 
-st.write(tmp)
+
 hist_fig = go.Figure()
 for name in tmp.index.get_level_values('name').unique():
     aux = tmp.loc[tmp.index.get_level_values('name') == name]

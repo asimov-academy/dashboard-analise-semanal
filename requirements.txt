@@ -1,10 +1,10 @@
 pandas
 streamlit >= 1.9.2
 plotly.express
+plotly
 pathlib
 google-cloud-storage
 google-auth-oauthlib
 google-auth
-requests
 millify
 numpy

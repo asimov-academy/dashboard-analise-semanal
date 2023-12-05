@@ -215,4 +215,5 @@ for name in tmp.index.get_level_values('name').unique():
     aux = tmp.loc[tmp.index.get_level_values('name') == name]
     hist_fig.add_trace(go.Scatter(x=aux.index.get_level_values('date'), y=aux[map_option.get(option_2)], mode='lines+markers', name=name))
 
+hist_fig.update_layout(title= f'Evolução da metrica {option_2} para {selected_adsets} no periodo', yaxis_title=option_2)
 st.plotly_chart(hist_fig, use_container_width=True)

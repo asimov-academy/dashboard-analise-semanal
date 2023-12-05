@@ -1,0 +1,10 @@
+pandas
+streamlit
+plotly.express
+pathlib
+google-cloud-storage
+google-auth-oauthlib
+google-auth
+requests
+millify
+numpy

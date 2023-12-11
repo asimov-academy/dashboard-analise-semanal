@@ -259,7 +259,7 @@ hist_fig.update_layout(title= f'Evolução da metrica {option_2} para {selected_
 st.plotly_chart(hist_fig, use_container_width=True)
 st.divider()
 st.subheader('Análise criativos')
-
+st.write('Dados para criativos disponíveis após 01/11')
 tmp_1 = limited_dct[['adset_name', 'ad_id', 'name', 'video_name','asset_type', 'spend', 'n_purchase', 'cpa_purchase', 'hash', 'source_image_url', 'preview_link']] #Pegando os dados de ads dct
 not_dct_ad = set(selected_adsets) - set(tmp_1['adset_name'])
 ads_data_concat = pd.concat([tmp_1, limited_ads.loc[limited_ads['adset_name'].isin(not_dct_ad), ['adset_name', 'ad_id', 'name', 'spend', 'n_purchase', 'cpa_purchase', 'preview_link']]])

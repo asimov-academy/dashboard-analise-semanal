@@ -7,7 +7,5 @@ google-auth-oauthlib
 google-auth
 millify
 numpy
-facebook_business
-facebook_businnes
 requests
 facebook_business

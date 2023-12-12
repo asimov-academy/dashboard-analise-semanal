@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from millify import millify
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from io import StringIO
 from facebook_business.adobjects.adcreative import AdCreative
 from facebook_business.api import FacebookAdsApi
@@ -62,6 +63,8 @@ def process_data(file_name):
     tmp_file = get_data_from_bucket(bucket_name='dashboard_marketing_processed', file_name=file_name)
     fb_data = pd.read_csv(StringIO(tmp_file))
     fb_data = get_custom_metrics(fb_data)
+    fb_data['action_value_purchase'].fillna(value=0, inplace=True)
+    fb_data['lucro'] = fb_data['action_value_purchase'] - fb_data['spend']
     fb = fb_data.loc[(fb_data['campaign_name'] == '[CONVERSAO] [DIP] Broad')].copy()
     return fb
 
@@ -99,7 +102,7 @@ def get_adimage(ad_account, img_hash):
 
 @st.cache_data
 def group_data(df):
-    grouped_fb = df[['name', 'spend', 'n_purchase']].groupby(by=['name']).sum()
+    grouped_fb = df[['name', 'spend', 'n_purchase', 'lucro']].groupby(by=['name']).sum()
     grouped_fb['Valor gasto (%)'] = (grouped_fb['spend']/grouped_fb['spend'].sum()) * 100
     grouped_fb['Valor gasto (%)'] = grouped_fb['Valor gasto (%)'].round(1)
     grouped_fb['cpa_purchase'] = round(grouped_fb['spend'] / grouped_fb['n_purchase'],2)
@@ -136,12 +139,16 @@ dct_ads = process_data('processed_ads_by_media.csv')
 dct_ads['ad_id'] = dct_ads['ad_id'].astype(str)
 ads = process_data('processed_ads.csv')
 ads['ad_id'] = ads['ad_id'].astype(str)
+#saving data in session_state
+st.session_state['fb'] = fb
+st.session_state['ads'] = ads
+st.session_state['dct'] = dct_ads 
 # FILTOS
 date_range = st.sidebar.date_input("Datas", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1))
 fb_data = fb.loc[(fb['date'] >= date_range[0]) &(fb['date'] <= date_range[1])].copy()
 adsets_ativos = get_adsets_ativos(fb_data=fb_data, date_range=date_range)
 more_than_one_day = st.sidebar.radio(label='Somente adsets ativos há mais de um dia?', options=['Sim', 'Não'], horizontal=True)
-if more_than_one_day == 'Sim':
+if (more_than_one_day == 'Sim')&(date_range[0] != date_range[1]):
     fb_data = fb_data.loc[fb_data['name'].isin(adsets_ativos)].copy()
 
 selected_adsets = st.sidebar.multiselect(label="Adsets", options=fb_data['name'].unique(), default=fb_data['name'].unique()[0])
@@ -155,98 +162,73 @@ Total_gasto_fb = fb_data['spend'].sum()
 grouped_fb = group_data(fb_data)
 medias = {'Valor gasto': round(fb_data['spend'].sum()/n_adsets, 1),
           'Vendas totais': round(Total_vendas_fb/n_adsets,1),
-           'CPA': round(grouped_fb['cpa_purchase'].replace(np.inf, np.nan).dropna().mean(),2)}
+          'CPA': round(grouped_fb['cpa_purchase'].replace(np.inf, np.nan).dropna().mean(),2),
+          'Lucro': round(grouped_fb['lucro'].sum()/n_adsets, 1)    
+           }
 nota_de_corte = Total_gasto_fb/n_adsets * 0.2
+faturamento = fb_data['action_value_purchase'].sum()
+ROAS = faturamento / Total_gasto_fb
+lucro = faturamento - Total_gasto_fb
 
 ######################### Start #########################################
 st.title('Analise Semanal do desempenho no Facebook')
-col_1, col_2 = st.columns(2)
+col_1, col_2, col_3 = st.columns(3)
 with col_1:
     st.metric(label='Investimento Facebook', value=millify(fb_data['spend'].sum(), precision=1))
+    st.metric(label='Faturamento - (Lucro)', value=f'{millify(faturamento, precision=1)} - ({millify(lucro, precision=1)})')
+    st.metric(label='ROAS', value=ROAS.round(2))
     st.metric(label='Vendas pelo Facebook', value=Total_vendas_fb)
 with col_2:
-    st.metric(label='Media de vendas por adset', value=medias.get('Vendas totais').round(2))
+
     st.metric(label='Gasto médio por adset', value=medias.get('Valor gasto').round(2))
     st.metric(label='CPA Médio', value=medias.get('CPA'))
 
 
-option_2 = st.radio(label="Selecione a métrica", options=['Valor gasto', 'Vendas totais', 'CPA'], horizontal=True)
-map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Vendas totais':'n_purchase'}
+option_2 = st.radio(label="Selecione a métrica", options=['Valor gasto', 'CPA', 'Lucro'], horizontal=True)
+map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro'}
 
 if option_2 == 'CPA':
     grouped_fb.sort_values(by='cpa_purchase', inplace=True, ascending=False)
-    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'])
+    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
+    metrica_fig.add_vline(x=medias[option_2], line_dash= 'dash', line_color='grey')
 
 elif option_2 == 'Valor gasto':
     grouped_fb.sort_values(by=map_option.get(option_2), inplace=True, ascending=True)
-    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'])
+    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
     metrica_fig.add_vline(x=nota_de_corte, line_dash='dash', line_color='red')
+    metrica_fig.add_vline(x=medias[option_2], line_dash= 'dash', line_color='grey')
 
 else:
     grouped_fb.sort_values(by=map_option.get(option_2), inplace=True, ascending=True)
-    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'])
+    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
+    metrica_fig.add_vline(x=medias.get(option_2), line_dash= 'dash', line_color='grey')
 
 st.plotly_chart(metrica_fig, use_container_width=True)
 
-
-col_1, col2 = st.columns(2)
 best_tmp = grouped_fb.tail(5)
 worst_tmp = grouped_fb.head(5)
 
-with col_1:  
-    top5_fig = px.bar(best_tmp, x=best_tmp.index, y=best_tmp[map_option.get(option_2)], title='Cinco melhores', hover_data=['Valor gasto (%)','Valor gasto (R$)'])
-    st.plotly_chart(top5_fig, use_container_width=True)
+#Ajustando o valor gasto para números amigáveis
+pretty_values_best = best_tmp['spend'].apply(lambda x: millify(x, precision=1))
+pretty_values_best = pretty_values_best.to_numpy().reshape((1, 5))
+pretty_values_worst = worst_tmp['spend'].apply(lambda x: millify(x, precision=1))
+pretty_values_worst = pretty_values_worst.to_numpy().reshape((1, 5))
+fig = make_subplots(rows=1, cols=2, column_titles=['5 melhores', '5 piores'], shared_yaxes=True)
 
-with col2:
-    worst5_fig = px.bar(worst_tmp, x=worst_tmp.index, y=worst_tmp[map_option.get(option_2)], title='Cinco piores',hover_data=['Valor gasto (%)','Valor gasto (R$)'] )
-    worst5_fig.update_xaxes(tickangle=45)
-    st.plotly_chart(worst5_fig, use_container_width=True)
+hover_template = 'Valor Gasto: %{customdata}'
+fig.add_trace(
+    go.Bar(x=best_tmp.index, y=best_tmp[map_option.get(option_2)],
+           customdata=pretty_values_best.ravel(), hovertemplate=hover_template),
+    row=1, col=1
+)
+fig.add_trace(
+    go.Bar(x=worst_tmp.index, y=worst_tmp[map_option.get(option_2)],
+           customdata=pretty_values_worst.ravel(), hovertemplate=hover_template), row=1, col=2)
 
-st.divider()
-st.subheader(f'Pódio com relação a métrica {option_2}')
-inner_1, inner_2, inner_3, inner_4, inner_5 = st.columns(5)
-with inner_1:
-    if option_2 == 'CPA':
-        st.metric(label=str(best_tmp.index[0]), value=best_tmp.loc[best_tmp.index[0], map_option.get(option_2)], delta=round(best_tmp.loc[best_tmp.index[0], map_option.get(option_2)] - medias.get(option_2),1), delta_color='inverse')
-        st.metric(label=str(worst_tmp.index[0]), value=worst_tmp.loc[worst_tmp.index[0], map_option.get(option_2)], delta=round(worst_tmp.loc[worst_tmp.index[0],  map_option.get(option_2)] -  medias.get(option_2),1), delta_color='inverse')
-    else:
-        st.metric(label=str(best_tmp.index[0]), value=millify(best_tmp.loc[best_tmp.index[0], map_option.get(option_2)], precision=1), delta=round(best_tmp.loc[best_tmp.index[0], map_option.get(option_2)] - medias.get(option_2),1))
-        st.metric(label=str(worst_tmp.index[0]), value=millify(worst_tmp.loc[worst_tmp.index[0], map_option.get(option_2)], precision=1), delta=round(worst_tmp.loc[worst_tmp.index[0],  map_option.get(option_2)] -  medias.get(option_2),1))
-
-with inner_2:
-    if option_2 == 'CPA':
-        st.metric(label=str(best_tmp.index[1]), value=best_tmp.loc[best_tmp.index[1], map_option.get(option_2)],  delta=round(best_tmp.loc[best_tmp.index[1], map_option.get(option_2)] - medias.get(option_2),1), delta_color='inverse')
-        st.metric(label=str(worst_tmp.index[1]), value=worst_tmp.loc[worst_tmp.index[1], map_option.get(option_2)], delta=round(worst_tmp.loc[worst_tmp.index[1],  map_option.get(option_2)] -  medias.get(option_2),1), delta_color='inverse')
-    else:
-        st.metric(label=str(best_tmp.index[1]), value=millify(best_tmp.loc[best_tmp.index[1], map_option.get(option_2)], precision=1), delta=round(best_tmp.loc[best_tmp.index[1], map_option.get(option_2)] - medias.get(option_2),1))
-        st.metric(label=str(worst_tmp.index[1]), value=millify(worst_tmp.loc[worst_tmp.index[1], map_option.get(option_2)], precision=1), delta=round(worst_tmp.loc[worst_tmp.index[1],  map_option.get(option_2)] -  medias.get(option_2),1))
-
-with inner_3:
-    if option_2 == 'CPA':
-        st.metric(label=str(best_tmp.index[2]), value= best_tmp.loc[best_tmp.index[2], map_option.get(option_2)], delta=round(best_tmp.loc[best_tmp.index[2], map_option.get(option_2)] - medias.get(option_2),1), delta_color='inverse')
-        st.metric(label=str(worst_tmp.index[2]), value= worst_tmp.loc[worst_tmp.index[2], map_option.get(option_2)], delta=round(worst_tmp.loc[worst_tmp.index[2],  map_option.get(option_2)] -  medias.get(option_2),1), delta_color='inverse')
-    else:
-        st.metric(label=str(best_tmp.index[2]), value=millify(best_tmp.loc[best_tmp.index[2], map_option.get(option_2)], precision=1), delta=round(best_tmp.loc[best_tmp.index[2], map_option.get(option_2)] - medias.get(option_2),1))
-        st.metric(label=str(worst_tmp.index[2]), value=millify(worst_tmp.loc[worst_tmp.index[2], map_option.get(option_2)], precision=1), delta=round(worst_tmp.loc[worst_tmp.index[2],  map_option.get(option_2)] -  medias.get(option_2),1))
-
-with inner_4:
-    if option_2 == 'CPA':
-        st.metric(label=str(best_tmp.index[3]), value= best_tmp.loc[best_tmp.index[3], map_option.get(option_2)], delta=round(best_tmp.loc[best_tmp.index[3], map_option.get(option_2)] - medias.get(option_2),1), delta_color='inverse')
-        st.metric(label=str(worst_tmp.index[3]), value= worst_tmp.loc[worst_tmp.index[3], map_option.get(option_2)], delta=round(worst_tmp.loc[worst_tmp.index[3],  map_option.get(option_2)] -  medias.get(option_2),1), delta_color='inverse')
-    else:
-        st.metric(label=str(best_tmp.index[3]), value=millify(best_tmp.loc[best_tmp.index[3], map_option.get(option_2)], precision=1), delta=round(best_tmp.loc[best_tmp.index[3], map_option.get(option_2)] - medias.get(option_2),1))
-        st.metric(label=str(worst_tmp.index[3]), value=millify(worst_tmp.loc[worst_tmp.index[3], map_option.get(option_2)],precision=1), delta=round(worst_tmp.loc[worst_tmp.index[3],  map_option.get(option_2)] -  medias.get(option_2),1))
-
-with inner_5:
-    if option_2 == 'CPA':
-        st.metric(label=str(best_tmp.index[4]), value=best_tmp.loc[best_tmp.index[4], map_option.get(option_2)], delta=round(best_tmp.loc[best_tmp.index[4], map_option.get(option_2)] - medias.get(option_2),1), delta_color='inverse')
-        st.metric(label=str(worst_tmp.index[4]), value=worst_tmp.loc[worst_tmp.index[4], map_option.get(option_2)], delta=round(worst_tmp.loc[worst_tmp.index[4],  map_option.get(option_2)] -  medias.get(option_2),1), delta_color='inverse')
-    else:
-        st.metric(label=str(best_tmp.index[4]), value=millify(best_tmp.loc[best_tmp.index[4], map_option.get(option_2)], precision=1), delta=round(best_tmp.loc[best_tmp.index[4], map_option.get(option_2)] - medias.get(option_2),1))
-        st.metric(label=str(worst_tmp.index[4]), value=millify(worst_tmp.loc[worst_tmp.index[4], map_option.get(option_2)], precision=1), delta=round(worst_tmp.loc[worst_tmp.index[4],  map_option.get(option_2)] -  medias.get(option_2),1))
+st.plotly_chart(fig, use_container_width=True)
 st.divider()
 
-tmp = fb_data[['date', 'name', 'spend', 'n_purchase']].groupby(by=['date', 'name']).sum()
+tmp = fb_data[['date', 'name', 'spend', 'n_purchase', 'lucro']].groupby(by=['date', 'name']).sum()
 tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
 tmp = tmp.loc[tmp.index.get_level_values('name').isin(selected_adsets)]
 
@@ -257,74 +239,4 @@ for name in tmp.index.get_level_values('name').unique():
 
 hist_fig.update_layout(title= f'Evolução da metrica {option_2} para {selected_adsets} no periodo', yaxis_title=option_2)
 st.plotly_chart(hist_fig, use_container_width=True)
-st.divider()
-st.subheader('Análise criativos')
-st.write('Dados para criativos disponíveis após 01/11')
-tmp_1 = limited_dct[['adset_name', 'ad_id', 'name', 'video_name','asset_type', 'spend', 'n_purchase', 'cpa_purchase', 'hash', 'source_image_url', 'preview_link']] #Pegando os dados de ads dct
-not_dct_ad = set(selected_adsets) - set(tmp_1['adset_name'])
-ads_data_concat = pd.concat([tmp_1, limited_ads.loc[limited_ads['adset_name'].isin(not_dct_ad), ['adset_name', 'ad_id', 'name', 'spend', 'n_purchase', 'cpa_purchase', 'preview_link']]])
-ads_data_concat.loc[~ads_data_concat['video_name'].isna(), 'name'] = ads_data_concat.loc[~ads_data_concat['video_name'].isna(), 'video_name'].values
-ads_data_concat.drop(['video_name'], axis=1, inplace=True)
 
-option_3 =  st.radio(label="Selecione a métrica", options=['Valor gasto', 'Vendas totais', 'CPA'], horizontal=True, key='ads_option')
-tmp_plot = ads_data_concat[['adset_name', 'name', 'spend', 'n_purchase']].groupby(by=['adset_name', 'name']).sum()
-tmp_plot['cpa_purchase'] = round(tmp_plot['spend'] / tmp_plot['n_purchase'])
-tmp_plot.reset_index(inplace=True)
-if option_3 == 'CPA':
-    tmp_plot.sort_values(by='cpa_purchase', inplace=True, ascending=False)
-    ads_fig = px.bar(data_frame=tmp_plot, x='cpa_purchase', y='name', color='adset_name')
-    
-else:
-    tmp_plot.sort_values(by=map_option.get(option_3), inplace=True, ascending=True)
-    ads_fig = px.bar(data_frame=tmp_plot, x=map_option.get(option_3), y='name', color='adset_name')
-
-st.plotly_chart(ads_fig, use_container_width=True)
-s_adset = st.selectbox(label='Selecione um adset para exibir os ads', options=selected_adsets, index=0)
-prev = ads_data_concat.loc[ads_data_concat['adset_name'] == s_adset]
-
-col_0, col_1, col_2 = st.columns(3)
-
-if not prev['asset_type'].isna().all():  
-    for i, name in enumerate(prev['name'].unique()):
-        creative = prev.loc[prev['name'] == name]
-
-        if(creative['asset_type'] == 'video_asset').all(): #criativo do tipo video
-            id_hash = creative[['ad_id', 'hash']].iloc[0].ravel()
-            if i == 0:
-                with col_0:
-                    show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
-
-            elif i == 1:
-                with col_1:
-                    show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
-            else:
-                with col_2:
-                    show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
-        
-        elif(creative['asset_type'] == 'image_asset').all():
-            id_hash = creative[['ad_id', 'hash']].iloc[0].ravel()
-            
-            if i == 0:
-                with col_0:
-                    st.image(get_adimage(act_id, id_hash[1]), use_column_width=True)
-
-            elif i == 1:
-                with col_1:
-                    st.image(get_adimage(act_id, id_hash[1]), use_column_width=True)
-            else:
-                with col_2:
-                    st.image(get_adimage(act_id, id_hash[1]), use_column_width=True)
-else:  
-    for i, name in enumerate(prev['name'].unique()):
-        creative = prev.loc[prev['name'] == name]
-        id_hash = creative[['ad_id']].iloc[0].ravel()
-        if i == 0:
-            with col_0:
-                components.html(get_preview(id_hash[0]), width=300, height=600)
-
-        elif i == 1:
-            with col_1:
-                components.html(get_preview(id_hash[0]), width=300, height=600)
-        else:
-            with col_2:
-                components.html(get_preview(id_hash[0]), width=300, height=600)

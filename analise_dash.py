@@ -104,6 +104,7 @@ def get_adimage(ad_account, img_hash):
 @st.cache_data
 def group_data(df):
     grouped_fb = df[['name', 'spend', 'n_purchase', 'lucro']].groupby(by=['name']).sum()
+    grouped_fb['lucro'] = grouped_fb['lucro'].round(2)
     grouped_fb['Valor gasto (%)'] = (grouped_fb['spend']/grouped_fb['spend'].sum()) * 100
     grouped_fb['Valor gasto (%)'] = grouped_fb['Valor gasto (%)'].round(1)
     grouped_fb['cpa_purchase'] = round(grouped_fb['spend'] / grouped_fb['n_purchase'],2)
@@ -199,6 +200,10 @@ elif option_2 == 'Valor gasto':
     metrica_fig.add_vline(x=nota_de_corte, line_dash='dash', line_color='red')
     metrica_fig.add_vline(x=medias[option_2], line_dash= 'dash', line_color='grey')
 
+elif option_2 == 'Lucro':
+    grouped_fb.sort_values(by=map_option.get(option_2), inplace=True, ascending=True)
+    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='lucro')
+    metrica_fig.add_vline(x=medias.get(option_2), line_dash= 'dash', line_color='grey')    
 else:
     grouped_fb.sort_values(by=map_option.get(option_2), inplace=True, ascending=True)
     metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')

@@ -65,6 +65,7 @@ def process_data(file_name):
     fb_data = get_custom_metrics(fb_data)
     fb_data['action_value_purchase'].fillna(value=0, inplace=True)
     fb_data['lucro'] = fb_data['action_value_purchase'] - fb_data['spend']
+    fb_data['lucro'] = fb_data['lucro'].round(2)
     fb = fb_data.loc[(fb_data['campaign_name'] == '[CONVERSAO] [DIP] Broad')].copy()
     return fb
 

@@ -33,15 +33,6 @@ def get_custom_metrics(df: pd.DataFrame) -> pd.DataFrame:
         raise Exception('spend, cost_per_thruplay, n_video_view, impressions or date not found in columns')
         return
     else:
-        mock_df.loc[mock_df['cost_per_thruplay'] == 0, 'cost_per_thruplay'] = np.nan
-        mock_df['thruplay'] = mock_df['spend'] / mock_df['cost_per_thruplay']
-        mock_df.loc[mock_df['n_landing_page_view'] == 0, 'n_landing_page_view'] = np.nan
-        mock_df['thruview'] = (mock_df['n_landing_page_view']/mock_df['n_link_click']) * 100
-        mock_df['CPTV'] = (mock_df['spend'] / mock_df['n_landing_page_view']) * 1.0
-        mock_df['Hook_rate'] = (mock_df['n_video_view'] / mock_df['impressions']) * 100
-        mock_df['Hold_rate'] = (mock_df['thruplay'] / mock_df['impressions']) * 100
-        mock_df['Attraction_index'] = (mock_df['thruplay'] / mock_df['n_video_view']) * 100
-        mock_df.loc[:,['Hook_rate', 'Hold_rate', 'Attraction_index']] = mock_df[['Hook_rate', 'Hold_rate', 'Attraction_index']].fillna(value=0)
         mock_df['date'] = pd.to_datetime(mock_df['date'])
         mock_df['date'] = mock_df['date'].dt.date
         mock_df.sort_values(by='date', inplace=True)
@@ -103,7 +94,7 @@ def get_adimage(ad_account, img_hash):
 
 @st.cache_data
 def group_data(df):
-    grouped_fb = df[['name', 'spend', 'n_purchase', 'lucro']].groupby(by=['name']).sum()
+    grouped_fb = df[['name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement']].groupby(by=['name']).sum()
     grouped_fb['lucro'] = grouped_fb['lucro'].round(2)
     grouped_fb['Valor gasto (%)'] = (grouped_fb['spend']/grouped_fb['spend'].sum()) * 100
     grouped_fb['Valor gasto (%)'] = grouped_fb['Valor gasto (%)'].round(1)
@@ -129,6 +120,21 @@ def get_adsets_ativos(date_range, fb_data):
         return adsets_ativos
     else:
         return None
+def get_global_metrics(df):
+    metricas = {}
+    metricas['alcance'] = df['reach'].sum()
+    metricas["frequencia"] = df['impressions'].sum()/df['reach'].sum()
+    metricas['cpc'] = df['spend'].sum() / df['inline_link_clicks'].sum()
+    metricas['true_visits'] = df['n_landing_page_view'].sum() / df['inline_link_clicks'].sum()
+    metricas['cptv'] = metricas['cpc'] / metricas['true_visits']
+    metricas['cpm'] = df['spend'].sum() / (df['impressions'].sum()/1000)
+    metricas['lp_views'] = df['n_landing_page_view'].sum()
+    metricas['custo_reaçao'] = df['spend'].sum() / df['n_post_reaction'].sum()
+    metricas['custo_comentario'] = df['spend'].sum() / df['n_comments'].sum()
+    metricas['custo_compartilhamento'] = df['spend'].sum() / df['n_shares'].sum()
+    return metricas
+
+
 
 ###################### GETTING THE DATA #########################################
 # DATA LOAD
@@ -164,30 +170,36 @@ Total_gasto_fb = fb_data['spend'].sum()
 grouped_fb = group_data(fb_data)
 medias = {'Valor gasto': round(fb_data['spend'].sum()/n_adsets, 1),
           'Vendas totais': round(Total_vendas_fb/n_adsets,1),
-          'CPA': round(grouped_fb['cpa_purchase'].replace(np.inf, np.nan).dropna().mean(),2),
-          'Lucro': round(grouped_fb['lucro'].sum()/n_adsets, 1)    
+          'CPA': round(grouped_fb['cpa_purchase'].replace(np.inf, np.nan).dropna().mean(),1),
+          'Lucro': round(grouped_fb['lucro'].sum()/n_adsets, 1),
+          'Engajamento': round(grouped_fb['n_post_engagement'].sum() / n_adsets,1)    
            }
 nota_de_corte = Total_gasto_fb/n_adsets * 0.2
 faturamento = fb_data['action_value_purchase'].sum()
 ROAS = faturamento / Total_gasto_fb
 lucro = faturamento - Total_gasto_fb
+metricas_globais = get_global_metrics(fb_data)
 
 ######################### Start #########################################
 st.title('Analise Semanal do desempenho no Facebook')
 col_1, col_2, col_3 = st.columns(3)
+
 with col_1:
     st.metric(label='Investimento Facebook', value=millify(fb_data['spend'].sum(), precision=1))
     st.metric(label='Faturamento - (Lucro)', value=f'{millify(faturamento, precision=1)} - ({millify(lucro, precision=1)})')
     st.metric(label='ROAS', value=ROAS.round(2))
     st.metric(label='Vendas pelo Facebook', value=Total_vendas_fb)
 with col_2:
+    st.metric(label='CPC - (CPTV)', value=f'{round(metricas_globais["cpc"],2)} - ({round(metricas_globais["cptv"],2)})')
+    st.metric(label='CPM', value=round(metricas_globais['cpm'],2))
+    st.metric(label='Visualizações da página de destino', value=round(metricas_globais['lp_views'],2))
+with col_3:
+    st.metric(label='Custo por reação', value=round(metricas_globais['custo_reaçao'],2))
+    st.metric(label='Custo por comentário', value=round(metricas_globais['custo_comentario'],2))
+    st.metric(label='Custo por compartilhamento', value=round(metricas_globais['custo_compartilhamento'],2))
 
-    st.metric(label='Gasto médio por adset', value=medias.get('Valor gasto').round(2))
-    st.metric(label='CPA Médio', value=medias.get('CPA'))
-
-
-option_2 = st.radio(label="Selecione a métrica", options=['Valor gasto', 'CPA', 'Lucro'], horizontal=True)
-map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro'}
+option_2 = st.radio(label="Selecione a métrica", options=['Valor gasto', 'CPA', 'Lucro', 'Engajamento'], horizontal=True)
+map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro', 'Engajamento':'n_post_engagement'}
 
 if option_2 == 'CPA':
     grouped_fb.sort_values(by='cpa_purchase', inplace=True, ascending=False)
@@ -210,7 +222,6 @@ else:
     metrica_fig.add_vline(x=medias.get(option_2), line_dash= 'dash', line_color='grey')
 
 st.plotly_chart(metrica_fig, use_container_width=True)
-
 best_tmp = grouped_fb.tail(5)
 worst_tmp = grouped_fb.head(5)
 
@@ -219,9 +230,9 @@ pretty_values_best = best_tmp['spend'].apply(lambda x: millify(x, precision=1))
 pretty_values_best = pretty_values_best.to_numpy().reshape((1, 5))
 pretty_values_worst = worst_tmp['spend'].apply(lambda x: millify(x, precision=1))
 pretty_values_worst = pretty_values_worst.to_numpy().reshape((1, 5))
-fig = make_subplots(rows=1, cols=2, column_titles=['5 melhores', '5 piores'], shared_yaxes=True)
+fig = make_subplots(rows=1, cols=2, column_titles=[f'5 melhores segundo a métrica {option_2}', f'5 piores segundo a métrica {option_2}'], shared_yaxes=True)
 
-hover_template = 'Valor Gasto: %{customdata}'
+hover_template = 'Valor Gasto: %{customdata}<br> Métrica: %{y}'
 fig.add_trace(
     go.Bar(x=best_tmp.index, y=best_tmp[map_option.get(option_2)],
            customdata=pretty_values_best.ravel(), hovertemplate=hover_template),
@@ -234,7 +245,7 @@ fig.add_trace(
 st.plotly_chart(fig, use_container_width=True)
 st.divider()
 
-tmp = fb_data[['date', 'name', 'spend', 'n_purchase', 'lucro']].groupby(by=['date', 'name']).sum()
+tmp = fb_data[['date', 'name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement']].groupby(by=['date', 'name']).sum()
 tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
 tmp = tmp.loc[tmp.index.get_level_values('name').isin(selected_adsets)]
 

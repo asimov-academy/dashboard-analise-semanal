@@ -25,10 +25,10 @@ if more_than_one_day == 'Sim':
 selected_adset = st.sidebar.selectbox(label="Adsets", options=fb_data['name'].unique())
 limited_dct = dct_ads.loc[(dct_ads['adset_name'] == selected_adset) & (dct_ads['date'] >= date_range[0]) & (dct_ads['date'] <= date_range[1])]
 limited_ads = ads.loc[(ads['adset_name'] == selected_adset) & (ads['date'] >= date_range[0]) & (ads['date'] <= date_range[1])]
-metric =  st.radio(label="Selecione a métrica", options=['Valor gasto', 'Vendas totais', 'CPA'], horizontal=True, key='ads_option')
+metric = st.radio(label="Selecione a métrica", options=['Valor gasto', 'CPA', 'Lucro', 'Engajamento'], horizontal=True, key='ads_option')
 ##################### START ####################
-map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Vendas totais':'n_purchase'}
-tmp_dct = limited_dct[['adset_name', 'ad_id', 'name', 'video_name','asset_type', 'spend', 'n_purchase', 'cpa_purchase', 'hash', 'source_image_url', 'preview_link']].copy() #Pegando os dados de ads dct
+map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro', 'Engajamento':'n_post_engagement'}
+tmp_dct = limited_dct[['adset_name', 'ad_id', 'name', 'video_name','asset_type', 'spend', 'n_purchase', 'cpa_purchase', 'hash', 'source_image_url', 'preview_link', 'lucro', 'n_post_engagement']].copy() #Pegando os dados de ads dct
 
 if selected_adset not in limited_dct['adset_name'].values:
     not_dct_ad = True
@@ -39,13 +39,13 @@ tmp_dct.loc[~tmp_dct['video_name'].isna(), 'name'] = tmp_dct.loc[~tmp_dct['video
 tmp_dct.drop(['video_name'], axis=1, inplace=True)
 
 if not_dct_ad == True:
-    tmp_plot = limited_ads[['adset_name', 'name', 'spend', 'n_purchase']].groupby(by=['adset_name', 'name']).sum()
+    tmp_plot = limited_ads[['adset_name', 'name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement']].groupby(by=['adset_name', 'name']).sum()
     tmp_plot['cpa_purchase'] = round(tmp_plot['spend'] / tmp_plot['n_purchase'])
     tmp_plot.reset_index(inplace=True)
     prev = limited_ads.loc[limited_ads['adset_name'] == selected_adset]
 
 elif not_dct_ad == False:
-    tmp_plot = tmp_dct[['adset_name', 'name', 'spend', 'n_purchase']].groupby(by=['adset_name', 'name']).sum()
+    tmp_plot = tmp_dct[['adset_name', 'name', 'spend', 'n_purchase','lucro', 'n_post_engagement']].groupby(by=['adset_name', 'name']).sum()
     tmp_plot['cpa_purchase'] = round(tmp_plot['spend'] / tmp_plot['n_purchase'])
     tmp_plot.reset_index(inplace=True)  
     prev = tmp_dct.loc[tmp_dct['adset_name'] == selected_adset]

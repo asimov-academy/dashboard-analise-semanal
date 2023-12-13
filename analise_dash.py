@@ -120,6 +120,7 @@ def get_adsets_ativos(date_range, fb_data):
         return adsets_ativos
     else:
         return None
+    
 def get_global_metrics(df):
     metricas = {}
     metricas['alcance'] = df['reach'].sum()
@@ -132,9 +133,24 @@ def get_global_metrics(df):
     metricas['custo_reaçao'] = df['spend'].sum() / df['n_post_reaction'].sum()
     metricas['custo_comentario'] = df['spend'].sum() / df['n_comments'].sum()
     metricas['custo_compartilhamento'] = df['spend'].sum() / df['n_shares'].sum()
+    metricas['investimento'] = df['spend'].sum()
+    metricas['faturamento'] = df['action_value_purchase'].sum()
+    metricas['roas'] = metricas['faturamento'] / metricas['investimento']
+    metricas['lucro'] = metricas['faturamento'] - metricas['investimento']
     return metricas
 
-
+month_dict ={'Jan': 1,
+        'Fev': 2,
+        'Mar': 3,
+        'Abr': 4,
+        'Mai': 5,
+        'Jun': 6,
+        'Jul': 7,
+        'Ago': 8,
+        'Set': 9,
+        'Out': 10,
+        'Nov': 11,
+        'Dez': 12}
 
 ###################### GETTING THE DATA #########################################
 # DATA LOAD
@@ -151,22 +167,31 @@ ads['ad_id'] = ads['ad_id'].astype(str)
 st.session_state['fb'] = fb
 st.session_state['ads'] = ads
 st.session_state['dct'] = dct_ads 
-# FILTOS
+# FILTRANDO OS DADOS
 date_range = st.sidebar.date_input("Datas", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1))
 fb_data = fb.loc[(fb['date'] >= date_range[0]) &(fb['date'] <= date_range[1])].copy()
+# Pegando os dados do mes de referência
+dates_benchmark = st.sidebar.date_input(label='Escolha o período de referência', value=[datetime.strptime('2023-10-01', '%Y-%m-%d'), datetime.strptime('2023-10-31', '%Y-%m-%d')])
+fb_benchmark = fb.loc[(fb['date'] >= dates_benchmark[0]) & (fb['date'] <= dates_benchmark[1])].copy()
+# Pegando o número de adsets
 adsets_ativos = get_adsets_ativos(fb_data=fb_data, date_range=date_range)
+adsets_ativos_benchmark = get_adsets_ativos(fb_data=fb_benchmark, date_range=dates_benchmark)
 more_than_one_day = st.sidebar.radio(label='Somente adsets ativos há mais de um dia?', options=['Sim', 'Não'], horizontal=True)
 if (more_than_one_day == 'Sim')&(date_range[0] != date_range[1]):
     fb_data = fb_data.loc[fb_data['name'].isin(adsets_ativos)].copy()
+    fb_benchmark = fb_benchmark.loc[fb_benchmark['name'].isin(adsets_ativos_benchmark)].copy()
 
+# Adsets para a análise
 selected_adsets = st.sidebar.multiselect(label="Adsets", options=fb_data['name'].unique(), default=fb_data['name'].unique()[0])
 limited_dct = dct_ads.loc[dct_ads['adset_name'].isin(selected_adsets) & (dct_ads['date'] >= date_range[0]) & (dct_ads['date'] <= date_range[1])]
 limited_ads = ads.loc[ads['adset_name'].isin(selected_adsets) & (ads['date'] >= date_range[0]) & (ads['date'] <= date_range[1])]
 
 ##################### GETTING SOME NUMBERS ######################################
 n_adsets = fb_data['name'].unique().shape[0]
+metricas_globais = get_global_metrics(fb_data)
+referência_globais = get_global_metrics(fb_benchmark)
 Total_vendas_fb = fb_data['n_purchase'].sum().astype(int)
-Total_gasto_fb = fb_data['spend'].sum()
+
 grouped_fb = group_data(fb_data)
 medias = {'Valor gasto': round(fb_data['spend'].sum()/n_adsets, 1),
           'Vendas totais': round(Total_vendas_fb/n_adsets,1),
@@ -174,29 +199,26 @@ medias = {'Valor gasto': round(fb_data['spend'].sum()/n_adsets, 1),
           'Lucro': round(grouped_fb['lucro'].sum()/n_adsets, 1),
           'Engajamento': round(grouped_fb['n_post_engagement'].sum() / n_adsets,1)    
            }
-nota_de_corte = Total_gasto_fb/n_adsets * 0.2
-faturamento = fb_data['action_value_purchase'].sum()
-ROAS = faturamento / Total_gasto_fb
-lucro = faturamento - Total_gasto_fb
-metricas_globais = get_global_metrics(fb_data)
+nota_de_corte = metricas_globais['investimento']/n_adsets * 0.2
 
 ######################### Start #########################################
 st.title('Analise Semanal do desempenho no Facebook')
 col_1, col_2, col_3 = st.columns(3)
-
 with col_1:
-    st.metric(label='Investimento Facebook', value=millify(fb_data['spend'].sum(), precision=1))
-    st.metric(label='Faturamento - (Lucro)', value=f'{millify(faturamento, precision=1)} - ({millify(lucro, precision=1)})')
-    st.metric(label='ROAS', value=ROAS.round(2))
-    st.metric(label='Vendas pelo Facebook', value=Total_vendas_fb)
+    st.metric(label='Investimento Facebook', value=millify(metricas_globais['investimento'], precision=1), delta=millify(metricas_globais['investimento'] - referência_globais['investimento'], precision=1), delta_color='off')
+    st.metric(label='Faturamento - (Lucro)', value=f'{millify(metricas_globais["faturamento"], precision=1)} - ({millify(metricas_globais["lucro"], precision=1)})')
+    st.metric(label='ROAS', value=metricas_globais['roas'].round(2))
+    st.metric(label='Vendas pelo Facebook', value=Total_vendas_fb, delta=Total_vendas_fb - fb_benchmark['n_purchase'].sum())
 with col_2:
-    st.metric(label='CPC - (CPTV)', value=f'{round(metricas_globais["cpc"],2)} - ({round(metricas_globais["cptv"],2)})')
-    st.metric(label='CPM', value=round(metricas_globais['cpm'],2))
-    st.metric(label='Visualizações da página de destino', value=round(metricas_globais['lp_views'],2))
+    st.metric(label='CPC - (CPTV)', value=f'{round(metricas_globais["cpc"],2)} - ({round(metricas_globais["cptv"],2)})',
+              delta=f'{round(metricas_globais["cpc"] - referência_globais["cpc"],2)} - ({round(metricas_globais["cptv"] - referência_globais["cptv"],2)})',
+              delta_color='inverse')
+    st.metric(label='CPM', value=round(metricas_globais['cpm'],2), delta=round(metricas_globais['cpm'] - referência_globais["cpm"],2), delta_color='inverse')
+    st.metric(label='Visualizações da página de destino', value=round(metricas_globais['lp_views'],2), delta=round(metricas_globais['lp_views'] - referência_globais['lp_views'], 2))
 with col_3:
-    st.metric(label='Custo por reação', value=round(metricas_globais['custo_reaçao'],2))
-    st.metric(label='Custo por comentário', value=round(metricas_globais['custo_comentario'],2))
-    st.metric(label='Custo por compartilhamento', value=round(metricas_globais['custo_compartilhamento'],2))
+    st.metric(label='Custo por reação', value=round(metricas_globais['custo_reaçao'],2), delta=round(metricas_globais['custo_reaçao'] - referência_globais['custo_reaçao'], 2), delta_color='inverse')
+    st.metric(label='Custo por comentário', value=round(metricas_globais['custo_comentario'],2), delta=round(metricas_globais['custo_comentario'] - referência_globais['custo_comentario'],2), delta_color='inverse')
+    st.metric(label='Custo por compartilhamento', value=round(metricas_globais['custo_compartilhamento'],2), delta=round(metricas_globais['custo_compartilhamento'] - referência_globais['custo_compartilhamento'], 2), delta_color='inverse')
 
 option_2 = st.radio(label="Selecione a métrica", options=['Valor gasto', 'CPA', 'Lucro', 'Engajamento'], horizontal=True)
 map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro', 'Engajamento':'n_post_engagement'}

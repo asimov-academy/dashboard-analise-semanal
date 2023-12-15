@@ -8,7 +8,7 @@ from millify import millify
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from io import StringIO
+from io import StringIO, BytesIO
 from facebook_business.adobjects.adcreative import AdCreative
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.ad import Ad
@@ -38,16 +38,34 @@ def get_custom_metrics(df: pd.DataFrame) -> pd.DataFrame:
         mock_df.sort_values(by='date', inplace=True)
         return mock_df
     
-@st.cache_data(ttl='12h')
-def get_data_from_bucket(bucket_name: str, file_name: str) -> bool:
 
+def get_data_from_bucket(bucket_name: str, file_name: str, file_type: str = 'csv') -> bool:
+    """Get file_name from google storage bucket (bucket_name)"""
     credentials = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_STORAGE"])
     client = storage.Client(credentials=credentials)
     source_bucket_name = bucket_name
     bucket = client.bucket(source_bucket_name)
     blob = bucket.blob(file_name)
-    blob_content = blob.download_as_text()
+    if file_type == 'csv':
+        blob_content = blob.download_as_text()
+    else:
+        blob_content = blob.download_as_bytes()
     return blob_content
+
+def upload_dataframe_to_gcs(bucket_name, dataframe, destination_blob_name):
+    """Uploads a Pandas DataFrame to Google Cloud Storage in Feather format."""
+    feather_buffer = BytesIO()
+    dataframe.to_feather(feather_buffer)
+
+    feather_buffer.seek(0)
+    
+    credentials = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_STORAGE"])
+    storage_client = storage.Client(credentials=credentials)
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(destination_blob_name)
+
+    blob.upload_from_file(feather_buffer, content_type="application/octet-stream")
+    return
 
 @st.cache_data(ttl='12h')
 def process_data(file_name):
@@ -94,12 +112,13 @@ def get_adimage(ad_account, img_hash):
 
 @st.cache_data
 def group_data(df):
-    grouped_fb = df[['name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement']].groupby(by=['name']).sum()
+    grouped_fb = df[['name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement', 'action_value_purchase']].groupby(by=['name']).sum()
     grouped_fb['lucro'] = grouped_fb['lucro'].round(2)
     grouped_fb['Valor gasto (%)'] = (grouped_fb['spend']/grouped_fb['spend'].sum()) * 100
     grouped_fb['Valor gasto (%)'] = grouped_fb['Valor gasto (%)'].round(1)
     grouped_fb['cpa_purchase'] = round(grouped_fb['spend'] / grouped_fb['n_purchase'],2)
     grouped_fb['Valor gasto (R$)'] = grouped_fb['spend'].apply(lambda x: millify(x, precision=1))
+    grouped_fb['ROAS'] = round(grouped_fb['action_value_purchase']/grouped_fb['spend'],2)
     return grouped_fb
 
 def get_preview(ad_id):
@@ -139,23 +158,19 @@ def get_global_metrics(df):
     metricas['lucro'] = metricas['faturamento'] - metricas['investimento']
     return metricas
 
-month_dict ={'Jan': 1,
-        'Fev': 2,
-        'Mar': 3,
-        'Abr': 4,
-        'Mai': 5,
-        'Jun': 6,
-        'Jul': 7,
-        'Ago': 8,
-        'Set': 9,
-        'Out': 10,
-        'Nov': 11,
-        'Dez': 12}
+def update_annotations(old_annotations, new_annotations):
+    old_annotations.update(new_annotations)
+    upload_dataframe_to_gcs(bucket_name='dashboard_marketing_processed', dataframe=old_annotations, destination_blob_name='annotations_df.feather')
+    return
 
 ###################### GETTING THE DATA #########################################
 # DATA LOAD
 access_token = st.secrets['FACEBOOK']['access_token']
 act_id = st.secrets['FACEBOOK']['act_id']
+tmp_annotations = get_data_from_bucket(bucket_name='dashboard_marketing_processed', file_name='annotations_df.feather', file_type='.feather')
+annotations_df = pd.read_feather(BytesIO(tmp_annotations))
+annotations_df['big_idea'] = annotations_df['big_idea'].astype(str)
+
 #Process
 FacebookAdsApi.init(access_token=access_token)
 fb = process_data('processed_adsets.csv')
@@ -163,16 +178,24 @@ dct_ads = process_data('processed_ads_by_media.csv')
 dct_ads['ad_id'] = dct_ads['ad_id'].astype(str)
 ads = process_data('processed_ads.csv')
 ads['ad_id'] = ads['ad_id'].astype(str)
+
 #saving data in session_state
 st.session_state['fb'] = fb
 st.session_state['ads'] = ads
 st.session_state['dct'] = dct_ads 
+
 # FILTRANDO OS DADOS
 date_range = st.sidebar.date_input("Datas", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1))
 fb_data = fb.loc[(fb['date'] >= date_range[0]) &(fb['date'] <= date_range[1])].copy()
+metric_options = ['Valor gasto', 'CPA', 'Lucro', 'Engajamento', 'ROAS']
+metric = st.sidebar.radio(label="Selecione a métrica", options=metric_options, horizontal=True)
+map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro', 'Engajamento':'n_post_engagement', 'ROAS':'ROAS'}
+
 # Pegando os dados do mes de referência
 dates_benchmark = st.sidebar.date_input(label='Escolha o período de referência', value=[datetime.strptime('2023-10-01', '%Y-%m-%d'), datetime.strptime('2023-10-31', '%Y-%m-%d')])
 fb_benchmark = fb.loc[(fb['date'] >= dates_benchmark[0]) & (fb['date'] <= dates_benchmark[1])].copy()
+limited_annotations = annotations_df.loc[annotations_df.index.isin(fb_data['adset_name'].unique())]
+
 # Pegando o número de adsets
 adsets_ativos = get_adsets_ativos(fb_data=fb_data, date_range=date_range)
 adsets_ativos_benchmark = get_adsets_ativos(fb_data=fb_benchmark, date_range=dates_benchmark)
@@ -182,7 +205,7 @@ if (more_than_one_day == 'Sim')&(date_range[0] != date_range[1]):
     fb_benchmark = fb_benchmark.loc[fb_benchmark['name'].isin(adsets_ativos_benchmark)].copy()
 
 # Adsets para a análise
-selected_adsets = st.sidebar.multiselect(label="Adsets", options=fb_data['name'].unique(), default=fb_data['name'].unique()[0])
+selected_adsets = st.sidebar.multiselect(label="Selecione um ou mais Adsets", options=fb_data['name'].unique(), default=fb_data['name'].unique()[0])
 limited_dct = dct_ads.loc[dct_ads['adset_name'].isin(selected_adsets) & (dct_ads['date'] >= date_range[0]) & (dct_ads['date'] <= date_range[1])]
 limited_ads = ads.loc[ads['adset_name'].isin(selected_adsets) & (ads['date'] >= date_range[0]) & (ads['date'] <= date_range[1])]
 
@@ -193,11 +216,13 @@ referência_globais = get_global_metrics(fb_benchmark)
 Total_vendas_fb = fb_data['n_purchase'].sum().astype(int)
 
 grouped_fb = group_data(fb_data)
-medias = {'Valor gasto': round(fb_data['spend'].sum()/n_adsets, 1),
+grouped_fb = grouped_fb.merge(annotations_df, left_index=True, right_index=True, how='left')
+medias = {'Valor gasto': round(fb_data['spend'].sum()/n_adsets, 1),              #Medidas em relação a todo o periodo selecionado
           'Vendas totais': round(Total_vendas_fb/n_adsets,1),
-          'CPA': round(grouped_fb['cpa_purchase'].replace(np.inf, np.nan).dropna().mean(),1),
+          'CPA': round(fb_data['spend'].sum()/fb_data['n_purchase'].sum(), 2),
           'Lucro': round(grouped_fb['lucro'].sum()/n_adsets, 1),
-          'Engajamento': round(grouped_fb['n_post_engagement'].sum() / n_adsets,1)    
+          'Engajamento': round(fb_data['n_post_engagement'].sum() / n_adsets,1), 
+          'ROAS': round(fb_data['action_value_purchase'].sum()/fb_data['spend'].sum())   
            }
 nota_de_corte = metricas_globais['investimento']/n_adsets * 0.2
 
@@ -220,61 +245,190 @@ with col_3:
     st.metric(label='Custo por comentário', value=round(metricas_globais['custo_comentario'],2), delta=round(metricas_globais['custo_comentario'] - referência_globais['custo_comentario'],2), delta_color='inverse')
     st.metric(label='Custo por compartilhamento', value=round(metricas_globais['custo_compartilhamento'],2), delta=round(metricas_globais['custo_compartilhamento'] - referência_globais['custo_compartilhamento'], 2), delta_color='inverse')
 
-option_2 = st.radio(label="Selecione a métrica", options=['Valor gasto', 'CPA', 'Lucro', 'Engajamento'], horizontal=True)
-map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro', 'Engajamento':'n_post_engagement'}
+adset_expander = st.expander('Nível - Adset')
+annotation_option = None
 
-if option_2 == 'CPA':
-    grouped_fb.sort_values(by='cpa_purchase', inplace=True, ascending=False)
-    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
-    metrica_fig.add_vline(x=medias[option_2], line_dash= 'dash', line_color='grey')
+with adset_expander:
+    annotations_indicator = st.checkbox('Usar dados de anotações (Big Idea e Awareness Level)', value=False)
+    if annotations_indicator == True:
+        annotation_option = st.sidebar.radio(label='', label_visibility='collapsed', options=annotations_df.columns)
 
-elif option_2 == 'Valor gasto':
-    grouped_fb.sort_values(by=map_option.get(option_2), inplace=True, ascending=True)
-    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
-    metrica_fig.add_vline(x=nota_de_corte, line_dash='dash', line_color='red')
-    metrica_fig.add_vline(x=medias[option_2], line_dash= 'dash', line_color='grey')
+    if metric == 'CPA':
+        grouped_fb.sort_values(by='cpa_purchase', inplace=True, ascending=False)
 
-elif option_2 == 'Lucro':
-    grouped_fb.sort_values(by=map_option.get(option_2), inplace=True, ascending=True)
-    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='lucro')
-    metrica_fig.add_vline(x=medias.get(option_2), line_dash= 'dash', line_color='grey')    
-else:
-    grouped_fb.sort_values(by=map_option.get(option_2), inplace=True, ascending=True)
-    metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(option_2)], title=f'Distribuição da métrica {option_2} adset', color=grouped_fb[map_option.get(option_2)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
-    metrica_fig.add_vline(x=medias.get(option_2), line_dash= 'dash', line_color='grey')
+        if annotation_option is None:
+            metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[map_option.get(metric)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
+        
+        else:
+             metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[annotation_option].astype(str), hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')       
+        
+        metrica_fig.add_vline(x=medias[metric], line_dash= 'dash', line_color='grey')
 
-st.plotly_chart(metrica_fig, use_container_width=True)
-best_tmp = grouped_fb.tail(5)
-worst_tmp = grouped_fb.head(5)
+    elif metric == 'Valor gasto':
+        grouped_fb.sort_values(by=map_option.get(metric), inplace=True, ascending=True)
+        if annotation_option is None:
+            metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[map_option.get(metric)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
+            metrica_fig.add_vline(x=nota_de_corte, line_dash='dash', line_color='red')
+            metrica_fig.add_vline(x=medias[metric], line_dash= 'dash', line_color='grey')
+        else:
+            metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[annotation_option].astype(str), hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
+            metrica_fig.add_vline(x=nota_de_corte, line_dash='dash', line_color='red')
+            metrica_fig.add_vline(x=medias[metric], line_dash= 'dash', line_color='grey')
 
-#Ajustando o valor gasto para números amigáveis
-pretty_values_best = best_tmp['spend'].apply(lambda x: millify(x, precision=1))
-pretty_values_best = pretty_values_best.to_numpy().reshape((1, 5))
-pretty_values_worst = worst_tmp['spend'].apply(lambda x: millify(x, precision=1))
-pretty_values_worst = pretty_values_worst.to_numpy().reshape((1, 5))
-fig = make_subplots(rows=1, cols=2, column_titles=[f'5 melhores segundo a métrica {option_2}', f'5 piores segundo a métrica {option_2}'], shared_yaxes=True)
+    elif metric == 'Lucro':
+        grouped_fb.sort_values(by=map_option.get(metric), inplace=True, ascending=True)
+        if annotation_option is None:
+            metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[map_option.get(metric)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='lucro')
+            metrica_fig.add_vline(x=medias.get(metric), line_dash= 'dash', line_color='grey')
+        else:
+            metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[annotation_option].astype(str), hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='lucro')
+            metrica_fig.add_vline(x=medias.get(metric), line_dash= 'dash', line_color='grey')            
+    else:
+        grouped_fb.sort_values(by=map_option.get(metric), inplace=True, ascending=True)
+        if annotation_option is None:
+            metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[map_option.get(metric)], hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
+            metrica_fig.add_vline(x=medias.get(metric), line_dash= 'dash', line_color='grey')
+        else:
+            metrica_fig = px.bar(grouped_fb, y=grouped_fb.index, x=grouped_fb[map_option.get(metric)], title=f'Distribuição da métrica {metric} adset', color=grouped_fb[annotation_option].astype(str), hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, text='n_purchase')
+            metrica_fig.add_vline(x=medias.get(metric), line_dash= 'dash', line_color='grey')            
 
-hover_template = 'Valor Gasto: %{customdata}<br> Métrica: %{y}'
-fig.add_trace(
-    go.Bar(x=best_tmp.index, y=best_tmp[map_option.get(option_2)],
-           customdata=pretty_values_best.ravel(), hovertemplate=hover_template),
-    row=1, col=1
-)
-fig.add_trace(
-    go.Bar(x=worst_tmp.index, y=worst_tmp[map_option.get(option_2)],
-           customdata=pretty_values_worst.ravel(), hovertemplate=hover_template), row=1, col=2)
+    st.plotly_chart(metrica_fig, use_container_width=True)
+    best_tmp = grouped_fb.tail(5)
+    worst_tmp = grouped_fb.head(5)
 
-st.plotly_chart(fig, use_container_width=True)
-st.divider()
+    #Ajustando o valor gasto para números amigáveis
+    pretty_values_best = best_tmp['spend'].apply(lambda x: millify(x, precision=1))
+    pretty_values_best = pretty_values_best.to_numpy().reshape((1, 5))
+    pretty_values_worst = worst_tmp['spend'].apply(lambda x: millify(x, precision=1))
+    pretty_values_worst = pretty_values_worst.to_numpy().reshape((1, 5))
+    fig = make_subplots(rows=1, cols=2, column_titles=[f'5 melhores segundo a métrica {metric}', f'5 piores segundo a métrica {metric}'], shared_yaxes=True)
 
-tmp = fb_data[['date', 'name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement']].groupby(by=['date', 'name']).sum()
-tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
-tmp = tmp.loc[tmp.index.get_level_values('name').isin(selected_adsets)]
+    hover_template = 'Valor Gasto: %{customdata}<br> Métrica: %{y}'
+    fig.add_trace(
+        go.Bar(x=best_tmp.index, y=best_tmp[map_option.get(metric)],
+            customdata=pretty_values_best.ravel(), hovertemplate=hover_template),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Bar(x=worst_tmp.index, y=worst_tmp[map_option.get(metric)],
+            customdata=pretty_values_worst.ravel(), hovertemplate=hover_template), row=1, col=2)
+    fig.update_layout(showlegend=False)
 
-hist_fig = go.Figure()
-for name in tmp.index.get_level_values('name').unique():
-    aux = tmp.loc[tmp.index.get_level_values('name') == name]
-    hist_fig.add_trace(go.Scatter(x=aux.index.get_level_values('date'), y=aux[map_option.get(option_2)], mode='lines+markers', name=name))
+    st.plotly_chart(fig, use_container_width=True)
 
-hist_fig.update_layout(title= f'Evolução da metrica {option_2} para {selected_adsets} no periodo', yaxis_title=option_2)
-st.plotly_chart(hist_fig, use_container_width=True)
+    tmp = fb_data[['date', 'name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement','action_value_purchase']].groupby(by=['date', 'name']).sum()
+    tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
+    tmp['ROAS'] = round(tmp['action_value_purchase'] / tmp['spend'],2)
+    tmp = tmp.loc[tmp.index.get_level_values('name').isin(selected_adsets)]
+
+    hist_fig = go.Figure()
+    for name in tmp.index.get_level_values('name').unique():
+        aux = tmp.loc[tmp.index.get_level_values('name') == name]
+        hist_fig.add_trace(go.Scatter(x=aux.index.get_level_values('date'), y=aux[map_option.get(metric)], mode='lines+markers', name=name))
+
+    hist_fig.update_layout(title= f'Evolução da metrica {metric} para {selected_adsets} no periodo', yaxis_title=metric)
+    st.plotly_chart(hist_fig, use_container_width=True)
+
+    scatter_metrics = st.multiselect('Selecione 2 métricas para o gráfico de dispersão', options=metric_options, max_selections=2, default=['Valor gasto', 'ROAS'])
+    if len(scatter_metrics) == 2:
+        if annotation_option is None:
+            scateer_fig = px.scatter(data_frame=grouped_fb, x=map_option.get(scatter_metrics[0]), y=map_option.get(scatter_metrics[1]),
+                                 color=grouped_fb.index, color_discrete_sequence=px.colors.qualitative.Light24)
+            scateer_fig.update_layout(showlegend=False)
+
+        else:
+            scateer_fig = px.scatter(data_frame=grouped_fb, x=map_option.get(scatter_metrics[0]), y=map_option.get(scatter_metrics[1]),
+                                 color=grouped_fb[annotation_option].astype(str), color_discrete_sequence=px.colors.qualitative.Light24)
+           
+        st.plotly_chart(scateer_fig, use_container_width=True)         
+annotatios_exp = st.expander('Anotações')
+with annotatios_exp:
+    limited_annotations = st.data_editor(data=limited_annotations, use_container_width=True, column_config={'Unnamed: 0':st.column_config.TextColumn('Adset name'),
+                                                                                      'big_idea':st.column_config.TextColumn('Big Idea'),
+                                                                                      'awareness_level': 'Awareness_level'})
+    save = st.button(label='Save')
+    if save == True:
+        update_annotations(old_annotations=annotations_df, new_annotations=limited_annotations)
+        
+ads_expander = st.expander('Nível - Ads')
+with ads_expander:
+    
+    tmp_dct = limited_dct.loc[limited_dct['adset_name'].isin(selected_adsets)] #Pegando os dados de ads dct
+    tmp_dct.loc[~tmp_dct['video_name'].isna(), 'name'] = tmp_dct.loc[~tmp_dct['video_name'].isna(), 'video_name'].values
+    tmp_dct.drop(['video_name'], axis=1, inplace=True)
+    
+    not_dct = set(selected_adsets) - set(limited_dct['adset_name'])
+    if len(not_dct) > 0:
+        tmp_ads = limited_ads.loc[limited_ads['adset_name'].isin(not_dct)]
+        tmp_creatives = pd.concat([tmp_dct, tmp_ads], axis=0)
+    else:
+        tmp_creatives = tmp_dct
+    
+    tmp_plot = tmp_creatives[['adset_name', 'name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement','action_value_purchase']].groupby(by=['adset_name', 'name']).sum()
+    tmp_plot['cpa_purchase'] = round(tmp_plot['spend'] / tmp_plot['n_purchase'])
+    tmp_plot['ROAS'] = round(tmp['action_value_purchase']/tmp['spend'], 2)
+    tmp_plot.reset_index(inplace=True)
+
+    if metric == 'CPA':
+        tmp_plot.sort_values(by='cpa_purchase', inplace=True, ascending=False)
+        ads_fig = px.bar(data_frame=tmp_plot, x='cpa_purchase', y='name', color='adset_name')
+        
+    else:
+        tmp_plot.sort_values(by=map_option.get(metric), inplace=True, ascending=True)
+        ads_fig = px.bar(data_frame=tmp_plot, x=map_option.get(metric), y='name', color='adset_name')
+
+    st.plotly_chart(ads_fig, use_container_width=True)
+    
+    selected_adset = st.selectbox(label="Selecione um Adset para explorar os criativos", options=tmp_creatives['adset_name'].unique())
+    prev = tmp_creatives.loc[tmp_creatives['adset_name'] == selected_adset]
+
+    col_0, col_1, col_2 = st.columns(3)  
+    for i, name in enumerate(prev['name'].unique()):
+        creative = prev.loc[prev['name'] == name]
+
+        if(creative['asset_type'] == 'video_asset').all(): #criativo do tipo video
+            id_hash = creative[['ad_id', 'hash']].iloc[0].ravel()
+            if i == 0:
+                with col_0:
+                    show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
+
+            elif i == 1:
+                with col_1:
+                    show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
+            else:
+                with col_2:
+                    show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
+        
+        elif(creative['asset_type'] == 'image_asset').all():
+            id_hash = creative[['ad_id', 'hash', 'name']].iloc[0].ravel()
+            
+            if i == 0:
+                with col_0:
+                    st.write(id_hash[2])
+                    st.image(get_adimage(act_id, id_hash[1]), use_column_width=True)
+
+            elif i == 1:
+                with col_1:
+                    st.write(id_hash[2])
+                    st.image(get_adimage(act_id, id_hash[1]), use_column_width=True)
+            else:
+                with col_2:
+                    st.write(id_hash[2])
+                    st.image(get_adimage(act_id, id_hash[1]), use_column_width=True)
+        else:  
+            for i, name in enumerate(prev['name'].unique()):
+                creative = prev.loc[prev['name'] == name]
+                id_hash = creative[['ad_id']].iloc[0].ravel()
+                if i == 0:
+                    with col_0:
+                        st.write(name)
+                        components.html(get_preview(id_hash[0]), width=300, height=600)
+
+                elif i == 1:
+                    with col_1:
+                        st.write(name)
+                        components.html(get_preview(id_hash[0]), width=300, height=600)
+                else:
+                    with col_2:
+                        st.write(name)
+                        components.html(get_preview(id_hash[0]), width=300, height=600)

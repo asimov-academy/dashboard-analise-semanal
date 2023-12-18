@@ -391,7 +391,6 @@ with ads_expander:
             if i == 0:
                 with col_0:
                     show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
-
             elif i == 1:
                 with col_1:
                     show_video(hash=id_hash[1], access_token=access_token, height=600, width=300)
@@ -416,8 +415,6 @@ with ads_expander:
                     st.write(id_hash[2])
                     st.image(get_adimage(act_id, id_hash[1]), use_column_width=True)
         else:  
-            for i, name in enumerate(prev['name'].unique()):
-                creative = prev.loc[prev['name'] == name]
                 id_hash = creative[['ad_id']].iloc[0].ravel()
                 if i == 0:
                     with col_0:

@@ -334,7 +334,7 @@ with annotatios_exp:
         
 ads_expander = st.expander('Análise pontual', True)
 with ads_expander:
-    selected_adsets = st.multiselect(label="Selecione um ou mais Adsets", options=fb_data['name'].unique(), default=fb_data['name'].unique()[0])
+    selected_adsets = st.multiselect(label="Selecione um ou mais Adsets", options=fb_data['name'].unique())
     tmp = fb_data[['date', 'name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement','action_value_purchase']].groupby(by=['date', 'name']).sum()
     tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
     tmp['ROAS'] = round(tmp['action_value_purchase'] / tmp['spend'],2)

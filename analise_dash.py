@@ -5,7 +5,6 @@ from google.cloud import storage
 from google.oauth2 import service_account
 from datetime import datetime, timedelta
 from millify import millify
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from io import StringIO, BytesIO
@@ -170,6 +169,7 @@ act_id = st.secrets['FACEBOOK']['act_id']
 tmp_annotations = get_data_from_bucket(bucket_name='dashboard_marketing_processed', file_name='annotations_df.feather', file_type='.feather')
 annotations_df = pd.read_feather(BytesIO(tmp_annotations))
 annotations_df['big_idea'] = annotations_df['big_idea'].astype(str)
+annotations_df['awareness_level'] = annotations_df['awareness_level'].astype(str)
 
 #Process
 FacebookAdsApi.init(access_token=access_token)
@@ -192,7 +192,7 @@ metric = st.sidebar.radio(label="Selecione a métrica", options=metric_options, 
 map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro', 'Engajamento':'n_post_engagement', 'ROAS':'ROAS'}
 
 # Pegando os dados do mes de referência
-dates_benchmark = st.sidebar.date_input(label='Escolha o período de referência', value=[datetime.strptime('2023-10-01', '%Y-%m-%d'), datetime.strptime('2023-10-31', '%Y-%m-%d')])
+dates_benchmark = st.date_input(label='Escolha o período de referência', value=[datetime.strptime('2023-10-01', '%Y-%m-%d'), datetime.strptime('2023-10-31', '%Y-%m-%d')])
 fb_benchmark = fb.loc[(fb['date'] >= dates_benchmark[0]) & (fb['date'] <= dates_benchmark[1])].copy()
 limited_annotations = annotations_df.loc[annotations_df.index.isin(fb_data['adset_name'].unique())]
 
@@ -203,11 +203,6 @@ more_than_one_day = st.sidebar.radio(label='Somente adsets ativos há mais de um
 if (more_than_one_day == 'Sim')&(date_range[0] != date_range[1]):
     fb_data = fb_data.loc[fb_data['name'].isin(adsets_ativos)].copy()
     fb_benchmark = fb_benchmark.loc[fb_benchmark['name'].isin(adsets_ativos_benchmark)].copy()
-
-# Adsets para a análise
-selected_adsets = st.sidebar.multiselect(label="Selecione um ou mais Adsets", options=fb_data['name'].unique(), default=fb_data['name'].unique()[0])
-limited_dct = dct_ads.loc[dct_ads['adset_name'].isin(selected_adsets) & (dct_ads['date'] >= date_range[0]) & (dct_ads['date'] <= date_range[1])]
-limited_ads = ads.loc[ads['adset_name'].isin(selected_adsets) & (ads['date'] >= date_range[0]) & (ads['date'] <= date_range[1])]
 
 ##################### GETTING SOME NUMBERS ######################################
 n_adsets = fb_data['name'].unique().shape[0]
@@ -245,13 +240,13 @@ with col_3:
     st.metric(label='Custo por comentário', value=round(metricas_globais['custo_comentario'],2), delta=round(metricas_globais['custo_comentario'] - referência_globais['custo_comentario'],2), delta_color='inverse')
     st.metric(label='Custo por compartilhamento', value=round(metricas_globais['custo_compartilhamento'],2), delta=round(metricas_globais['custo_compartilhamento'] - referência_globais['custo_compartilhamento'], 2), delta_color='inverse')
 
-adset_expander = st.expander('Nível - Adset')
+adset_expander = st.expander('Nível - Adset', True)
 annotation_option = None
 
 with adset_expander:
-    annotations_indicator = st.checkbox('Usar dados de anotações (Big Idea e Awareness Level)', value=False)
+    annotations_indicator = st.checkbox('Usar dados de anotações (Big Idea e Awareness Level)', value=True)
     if annotations_indicator == True:
-        annotation_option = st.sidebar.radio(label='', label_visibility='collapsed', options=annotations_df.columns)
+        annotation_option = st.sidebar.radio(label='opções', label_visibility='collapsed', options=annotations_df.columns)
 
     if metric == 'CPA':
         grouped_fb.sort_values(by='cpa_purchase', inplace=True, ascending=False)
@@ -316,6 +311,30 @@ with adset_expander:
 
     st.plotly_chart(fig, use_container_width=True)
 
+    scatter_metrics = st.multiselect('Selecione 2 métricas para o gráfico de dispersão', options=metric_options, max_selections=2, default=['Valor gasto', 'ROAS'])
+    if len(scatter_metrics) == 2:
+        if annotation_option is None:
+            scateer_fig = px.scatter(data_frame=grouped_fb, x=map_option.get(scatter_metrics[0]), y=map_option.get(scatter_metrics[1]),
+                                 color=grouped_fb.index, color_discrete_sequence=px.colors.qualitative.Light24)
+            scateer_fig.update_layout(showlegend=False)
+
+        else:
+            scateer_fig = px.scatter(data_frame=grouped_fb, x=map_option.get(scatter_metrics[0]), y=map_option.get(scatter_metrics[1]),
+                                 color=grouped_fb[annotation_option].astype(str), color_discrete_sequence=px.colors.qualitative.Light24)
+           
+        st.plotly_chart(scateer_fig, use_container_width=True)         
+annotatios_exp = st.expander('Anotações', True)
+with annotatios_exp:
+    new_annotations = st.data_editor(data=limited_annotations, use_container_width=True, column_config={'Unnamed: 0':st.column_config.TextColumn('Adset name'),
+                                                                                      'big_idea':st.column_config.TextColumn('Big Idea'),
+                                                                                      'awareness_level': 'Awareness_level'})
+    save = st.button(label='Save')
+    if save == True:
+        update_annotations(old_annotations=annotations_df, new_annotations=new_annotations)
+        
+ads_expander = st.expander('Análise pontual', True)
+with ads_expander:
+    selected_adsets = st.multiselect(label="Selecione um ou mais Adsets", options=fb_data['name'].unique(), default=fb_data['name'].unique()[0])
     tmp = fb_data[['date', 'name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement','action_value_purchase']].groupby(by=['date', 'name']).sum()
     tmp['cpa_purchase'] = tmp['spend'] / tmp['n_purchase']
     tmp['ROAS'] = round(tmp['action_value_purchase'] / tmp['spend'],2)
@@ -329,29 +348,9 @@ with adset_expander:
     hist_fig.update_layout(title= f'Evolução da metrica {metric} para {selected_adsets} no periodo', yaxis_title=metric)
     st.plotly_chart(hist_fig, use_container_width=True)
 
-    scatter_metrics = st.multiselect('Selecione 2 métricas para o gráfico de dispersão', options=metric_options, max_selections=2, default=['Valor gasto', 'ROAS'])
-    if len(scatter_metrics) == 2:
-        if annotation_option is None:
-            scateer_fig = px.scatter(data_frame=grouped_fb, x=map_option.get(scatter_metrics[0]), y=map_option.get(scatter_metrics[1]),
-                                 color=grouped_fb.index, color_discrete_sequence=px.colors.qualitative.Light24)
-            scateer_fig.update_layout(showlegend=False)
-
-        else:
-            scateer_fig = px.scatter(data_frame=grouped_fb, x=map_option.get(scatter_metrics[0]), y=map_option.get(scatter_metrics[1]),
-                                 color=grouped_fb[annotation_option].astype(str), color_discrete_sequence=px.colors.qualitative.Light24)
-           
-        st.plotly_chart(scateer_fig, use_container_width=True)         
-annotatios_exp = st.expander('Anotações')
-with annotatios_exp:
-    limited_annotations = st.data_editor(data=limited_annotations, use_container_width=True, column_config={'Unnamed: 0':st.column_config.TextColumn('Adset name'),
-                                                                                      'big_idea':st.column_config.TextColumn('Big Idea'),
-                                                                                      'awareness_level': 'Awareness_level'})
-    save = st.button(label='Save')
-    if save == True:
-        update_annotations(old_annotations=annotations_df, new_annotations=limited_annotations)
-        
-ads_expander = st.expander('Nível - Ads')
-with ads_expander:
+    # Adsets para a análise
+    limited_dct = dct_ads.loc[dct_ads['adset_name'].isin(selected_adsets) & (dct_ads['date'] >= date_range[0]) & (dct_ads['date'] <= date_range[1])]
+    limited_ads = ads.loc[ads['adset_name'].isin(selected_adsets) & (ads['date'] >= date_range[0]) & (ads['date'] <= date_range[1])]
     
     tmp_dct = limited_dct.loc[limited_dct['adset_name'].isin(selected_adsets)] #Pegando os dados de ads dct
     tmp_dct.loc[~tmp_dct['video_name'].isna(), 'name'] = tmp_dct.loc[~tmp_dct['video_name'].isna(), 'video_name'].values

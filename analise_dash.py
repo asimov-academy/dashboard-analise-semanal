@@ -323,14 +323,6 @@ with adset_expander:
                                  color=grouped_fb[annotation_option].astype(str), color_discrete_sequence=px.colors.qualitative.Light24)
            
         st.plotly_chart(scateer_fig, use_container_width=True)         
-annotatios_exp = st.expander('Anotações', True)
-with annotatios_exp:
-    new_annotations = st.data_editor(data=limited_annotations, use_container_width=True, column_config={'Unnamed: 0':st.column_config.TextColumn('Adset name'),
-                                                                                      'big_idea':st.column_config.TextColumn('Big Idea'),
-                                                                                      'awareness_level': 'Awareness_level'})
-    save = st.button(label='Save')
-    if save == True:
-        update_annotations(old_annotations=annotations_df, new_annotations=new_annotations)
         
 ads_expander = st.expander('Análise pontual', True)
 with ads_expander:
@@ -428,3 +420,12 @@ with ads_expander:
                     with col_2:
                         st.write(name)
                         components.html(get_preview(id_hash[0]), width=300, height=600)
+                        annotatios_exp = st.expander('Anotações')
+annotatios_exp = st.expander('Anotações')
+with annotatios_exp:
+    new_annotations = st.data_editor(data=limited_annotations, use_container_width=True, column_config={'Unnamed: 0':st.column_config.TextColumn('Adset name'),
+                                                                                      'big_idea':st.column_config.TextColumn('Big Idea'),
+                                                                                      'awareness_level': 'Awareness_level'})
+    save = st.button(label='Save')
+    if save == True:
+        update_annotations(old_annotations=annotations_df, new_annotations=new_annotations)

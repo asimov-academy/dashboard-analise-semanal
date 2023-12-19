@@ -37,7 +37,6 @@ def get_custom_metrics(df: pd.DataFrame) -> pd.DataFrame:
         mock_df.sort_values(by='date', inplace=True)
         return mock_df
     
-
 def get_data_from_bucket(bucket_name: str, file_name: str, file_type: str = 'csv') -> bool:
     """Get file_name from google storage bucket (bucket_name)"""
     credentials = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_STORAGE"])
@@ -95,10 +94,13 @@ def get_advideos(hash, access_token):
 
 def show_video(hash, access_token, height, width):
     
-    link = get_advideos(hash=hash, access_token=access_token)
-    link = link.replace('height="1920"',  f'height="{height}"')
-    link = link.replace('width="1080"',  f'width="{width}"')
-    components.html(link, height=height, width=width)
+    try:
+        link = get_advideos(hash=hash, access_token=access_token)
+        link = link.replace('height="1920"',  f'height="{height}"')
+        link = link.replace('width="1080"',  f'width="{width}"')
+        components.html(link, height=height, width=width)
+    except Exception as e:
+        st.warning(e)
     return
 
 def get_adimage(ad_account, img_hash):
@@ -110,8 +112,18 @@ def get_adimage(ad_account, img_hash):
     return images[0].get('url')
 
 @st.cache_data
-def group_data(df):
-    grouped_fb = df[['name', 'spend', 'n_purchase', 'lucro', 'n_post_engagement', 'action_value_purchase']].groupby(by=['name']).sum()
+def count_adsets_by_annotation(df):
+    idea_counts = {idea: len(df.loc[df['big_idea'] == idea, 'name'].unique()) for idea in df['big_idea'].unique()}
+    awareness_count = {level: len(df.loc[df['awareness_level'] == level, 'name'].unique()) for level in df['awareness_level'].unique()}
+    
+    idea_df = pd.DataFrame.from_dict(idea_counts, orient='index', columns=['count'])
+    awareness_df = pd.DataFrame.from_dict(awareness_count, orient='index', columns=['count'])
+    
+    return idea_df, awareness_df
+
+@st.cache_data
+def group_data(df: pd.DataFrame, column: str):
+    grouped_fb = df[[column, 'spend', 'n_purchase', 'lucro', 'n_post_engagement', 'action_value_purchase']].groupby(by=[column]).sum()
     grouped_fb['lucro'] = grouped_fb['lucro'].round(2)
     grouped_fb['Valor gasto (%)'] = (grouped_fb['spend']/grouped_fb['spend'].sum()) * 100
     grouped_fb['Valor gasto (%)'] = grouped_fb['Valor gasto (%)'].round(1)
@@ -129,7 +141,10 @@ def get_preview(ad_id):
     }
     tmp = AdCreative(creativeID).get_previews(fields=fields, params=params)
     tmp = tmp[0]['body']
-    return tmp.replace(';t', '&t')
+    try:
+        return tmp.replace(';t', '&t')
+    except:
+        return None
 
 def get_adsets_ativos(date_range, fb_data):
     if date_range[0] < date_range[1]:
@@ -169,7 +184,7 @@ act_id = st.secrets['FACEBOOK']['act_id']
 tmp_annotations = get_data_from_bucket(bucket_name='dashboard_marketing_processed', file_name='annotations_df.feather', file_type='.feather')
 annotations_df = pd.read_feather(BytesIO(tmp_annotations))
 annotations_df['big_idea'] = annotations_df['big_idea'].astype(str)
-annotations_df['awareness_level'] = annotations_df['awareness_level'].astype(str)
+
 
 #Process
 FacebookAdsApi.init(access_token=access_token)
@@ -179,6 +194,12 @@ dct_ads['ad_id'] = dct_ads['ad_id'].astype(str)
 ads = process_data('processed_ads.csv')
 ads['ad_id'] = ads['ad_id'].astype(str)
 
+#Check if are new adsets not included in annotadions_df
+not_in_annotations = list(set(fb['name']) - set(annotations_df.index))
+missing_entries_df = pd.DataFrame(index=not_in_annotations, columns=annotations_df.columns)
+missing_entries_df.fillna(value='', inplace=True)
+annotations_df = pd.concat([annotations_df, missing_entries_df])
+
 #saving data in session_state
 st.session_state['fb'] = fb
 st.session_state['ads'] = ads
@@ -187,6 +208,7 @@ st.session_state['dct'] = dct_ads
 # FILTRANDO OS DADOS
 date_range = st.sidebar.date_input("Datas", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1))
 fb_data = fb.loc[(fb['date'] >= date_range[0]) &(fb['date'] <= date_range[1])].copy()
+fb_data = fb_data.merge(annotations_df, right_index=True, left_on='adset_name', how='left')
 metric_options = ['Valor gasto', 'CPA', 'Lucro', 'Engajamento', 'ROAS']
 metric = st.sidebar.radio(label="Selecione a métrica", options=metric_options, horizontal=True)
 map_option = {'Valor gasto':'spend', 'CPA':'cpa_purchase', 'Lucro':'lucro', 'Engajamento':'n_post_engagement', 'ROAS':'ROAS'}
@@ -204,13 +226,15 @@ if (more_than_one_day == 'Sim')&(date_range[0] != date_range[1]):
     fb_data = fb_data.loc[fb_data['name'].isin(adsets_ativos)].copy()
     fb_benchmark = fb_benchmark.loc[fb_benchmark['name'].isin(adsets_ativos_benchmark)].copy()
 
+
+ideia_counts, awareness_counts = count_adsets_by_annotation(fb_data)
 ##################### GETTING SOME NUMBERS ######################################
 n_adsets = fb_data['name'].unique().shape[0]
 metricas_globais = get_global_metrics(fb_data)
 referência_globais = get_global_metrics(fb_benchmark)
 Total_vendas_fb = fb_data['n_purchase'].sum().astype(int)
 
-grouped_fb = group_data(fb_data)
+grouped_fb = group_data(fb_data, 'name')
 grouped_fb = grouped_fb.merge(annotations_df, left_index=True, right_index=True, how='left')
 medias = {'Valor gasto': round(fb_data['spend'].sum()/n_adsets, 1),              #Medidas em relação a todo o periodo selecionado
           'Vendas totais': round(Total_vendas_fb/n_adsets,1),
@@ -288,6 +312,52 @@ with adset_expander:
             metrica_fig.add_vline(x=medias.get(metric), line_dash= 'dash', line_color='grey')            
 
     st.plotly_chart(metrica_fig, use_container_width=True)
+    ########## BAR CHART BY BIG IDEA/AWARENESS LEVEL ########################
+    if annotation_option is not None:
+        grouped_by_annotations = group_data(fb_data, annotation_option)
+        if annotation_option == 'big_idea':
+            grouped_by_annotations = grouped_by_annotations.merge(ideia_counts, left_index=True, right_index=True, how='left')
+        elif annotation_option == 'awareness_level':
+            grouped_by_annotations = grouped_by_annotations.merge(awareness_counts, left_index=True, right_index=True, how='left')
+        
+        if metric == 'CPA':
+            grouped_by_annotations.sort_values(by='cpa_purchase', inplace=True, ascending=False)
+            metrica_annot_fig = px.bar(grouped_by_annotations, y=grouped_by_annotations.index, x=grouped_by_annotations[map_option.get(metric)], 
+                                       title=f'Distribuição da métrica {metric} por {annotation_option}', 
+                                       color=grouped_by_annotations.index.astype(str), 
+                                       hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, 
+                                       text=[f'{count} adsets' for count in grouped_by_annotations['count']])      
+            metrica_annot_fig.add_vline(x=grouped_by_annotations[map_option.get(metric)].mean(), line_dash= 'dash', line_color='grey')
+        elif metric == 'Valor gasto':
+            grouped_by_annotations.sort_values(by=map_option.get(metric), inplace=True, ascending=True)
+            metrica_annot_fig = px.bar(grouped_by_annotations, y=grouped_by_annotations.index, x=grouped_by_annotations[map_option.get(metric)], 
+                                       title=f'Distribuição da métrica {metric} por {annotation_option}', 
+                                       color=grouped_by_annotations.index.astype(str), 
+                                       hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, 
+                                       text=[f'{count} adsets' for count in grouped_by_annotations['count']])
+            metrica_annot_fig.add_vline(x=grouped_by_annotations[map_option.get(metric)].mean(), line_dash= 'dash', line_color='grey') 
+        
+        elif metric == 'Lucro':
+            grouped_by_annotations.sort_values(by=map_option.get(metric), inplace=True, ascending=True)
+            metrica_annot_fig = px.bar(grouped_by_annotations, y=grouped_by_annotations.index, x=grouped_by_annotations[map_option.get(metric)], 
+                                       title=f'Distribuição da métrica {metric} por {annotation_option}', 
+                                       color=grouped_by_annotations.index.astype(str), 
+                                       hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, 
+                                       text=[f'{count} adsets' for count in grouped_by_annotations['count']])
+            metrica_annot_fig.add_vline(x=grouped_by_annotations[map_option.get(metric)].mean(), line_dash= 'dash', line_color='grey')
+        
+        else:
+            grouped_by_annotations.sort_values(by=map_option.get(metric), inplace=True, ascending=True)
+            metrica_annot_fig = px.bar(grouped_by_annotations, y=grouped_by_annotations.index, x=grouped_by_annotations[map_option.get(metric)], 
+                                       title=f'Distribuição da métrica {metric} por {annotation_option}', 
+                                       color=grouped_by_annotations.index.astype(str), 
+                                       hover_data=['Valor gasto (%)','Valor gasto (R$)'], height=800, width=300, 
+                                       text=[f'{count} adsets' for count in grouped_by_annotations['count']])
+            metrica_annot_fig.add_vline(x=grouped_by_annotations[map_option.get(metric)].mean(), line_dash= 'dash', line_color='grey') 
+
+        st.plotly_chart(metrica_annot_fig, use_container_width=True)    
+
+    ########## TOP/BOTTON 5 ############################
     best_tmp = grouped_fb.tail(5)
     worst_tmp = grouped_fb.head(5)
 
@@ -372,7 +442,7 @@ with ads_expander:
     
     selected_adset = st.selectbox(label="Selecione um Adset para explorar os criativos", options=tmp_creatives['adset_name'].unique())
     prev = tmp_creatives.loc[tmp_creatives['adset_name'] == selected_adset]
-
+    prev = prev.loc[prev['name'] != 'Auto-generated videos from image']
     col_0, col_1, col_2 = st.columns(3)  
     for i, name in enumerate(prev['name'].unique()):
         creative = prev.loc[prev['name'] == name]
@@ -420,7 +490,7 @@ with ads_expander:
                     with col_2:
                         st.write(name)
                         components.html(get_preview(id_hash[0]), width=300, height=600)
-                        annotatios_exp = st.expander('Anotações')
+
 annotatios_exp = st.expander('Anotações')
 with annotatios_exp:
     new_annotations = st.data_editor(data=limited_annotations, use_container_width=True, column_config={'Unnamed: 0':st.column_config.TextColumn('Adset name'),

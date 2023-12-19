@@ -1,6 +1,7 @@
 pandas
 streamlit >= 1.9.2
 plotly.express
+streamlit_authenticator
 pathlib
 google-cloud-storage
 google-auth-oauthlib

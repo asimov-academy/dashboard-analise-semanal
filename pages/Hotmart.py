@@ -8,11 +8,16 @@ from millify import millify
 import plotly.express as px
 
 def get_metrics(df: pd.DataFrame) -> dict:
+    """
+    Calculates the metrics (add metrics here) for a given df
+    """
     metrics = dict()
-    metrics['billing'] = df['price.value'].sum()
-    metrics['n_sales'] = df.shape[0]
-    metrics['refunds'] = df.loc[df['status'] == 'REFUNDED'].shape[0]
+    metrics['billing'] = df.loc[df['source'] == 'PRODUCER', 'commission.value'].sum()
+    metrics['n_sales'] = len(df['transaction'].unique())
+    metrics['refunds'] = len(df.loc[df['status'] == 'REFUNDED', 'transaction'].unique())
     metrics['avarage_ticket'] = metrics['billing'] / metrics['n_sales']
+    metrics['affiliates_sales'] = len(df.loc[(df['source'] == 'AFFILIATE'), 'transaction'])
+    metrics['sales_team_sales'] = len(df.loc[df['tracking.source_sck'] == 'vendas', 'transaction'])
     return metrics
 
 
@@ -38,8 +43,8 @@ if st.session_state["authentication_status"]:
         hotmart = st.session_state['hotmart_data'] = raw_hotmart
     
     ############# FILTRANDO OS DADOS ###########################################
-    date_range = st.sidebar.date_input("Periodo atual", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates')
-    dates_benchmark_hotmart = st.date_input("Periodo de referência", value=(datetime.today()-timedelta(days=14), datetime.today()-timedelta(days=8)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates_benchmark')
+    date_range = st.date_input("Periodo atual", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates')
+    dates_benchmark_hotmart = st.sidebar.date_input("Periodo de para comparação", value=(datetime.today()-timedelta(days=14), datetime.today()-timedelta(days=8)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates_benchmark')
     limited_hotmart = hotmart.loc[(hotmart['order_date'] >= date_range[0]) & 
                                   (hotmart['order_date'] <= date_range[1]) & 
                                   (hotmart['status'].isin(['APPROVED','REFUNDED','COMPLETE']))] #desprezando compras canceladas
@@ -54,9 +59,8 @@ if st.session_state["authentication_status"]:
     options = {'Faturamento' : 'price.value',
                'Vendas' : 'count'}
 
-    
     ################ INICIO ########################
-    col_1, col_2 = st.columns(2)
+    col_1, col_2, col_3 = st.columns(3)
     
     with col_1:
         st.metric('Faturamento', value = f'R${millify(current_metrics["billing"], precision=1)}', delta = millify(current_metrics['billing'] - benchmark_metrics['billing'], precision=1))
@@ -66,10 +70,17 @@ if st.session_state["authentication_status"]:
         st.metric('Vendas', value=current_metrics['n_sales'], delta=current_metrics['n_sales'] - benchmark_metrics['n_sales'])
         st.metric('Reembolsos', value=current_metrics['refunds'], delta= current_metrics['refunds'] - benchmark_metrics['refunds'], delta_color='inverse')
 
+    with col_3:
+        st.metric('Vendas - Time de vendas', value=current_metrics['sales_team_sales'], delta=current_metrics['sales_team_sales'] - benchmark_metrics['sales_team_sales'])
+        st.metric('Vendas - Afiliados', value=current_metrics['affiliates_sales'], delta=current_metrics['affiliates_sales'] - benchmark_metrics['affiliates_sales'])
+
 
     sck_figure = px.pie(data_frame=limited_hotmart, values='count', names= 'tracking.source_sck', hole=0.5, 
-                        title='Distribuição das vendas por sck', height=600).update_traces(textinfo='percent+value').update_layout(showlegend=True)
+                        title='Distribuição das vendas por sck', height=600).update_traces(textinfo='percent+value')
     st.plotly_chart(sck_figure, use_container_width=True)
+    product_figure = px.pie(data_frame=limited_hotmart, values='count', names='product_name', hole=0.5, 
+                            title='Produtos Vendidos', height=600).update_traces(textinfo='percent+value')
+    st.plotly_chart(product_figure, use_container_width=True)
 
     hotmart_metric = st.selectbox(label='Selecione uma métrica para acompanhar a evolução', options=['Faturamento', 'Vendas'], index=1)
     historic_data = hotmart[['approved_date', 'price.value', 'count']].groupby(by='approved_date').sum()

@@ -41,7 +41,7 @@ if st.session_state["authentication_status"]:
         hotmart = st.session_state['hotmart_data']
     except:
         tmp_hotmart = get_data_from_bucket(bucket_name='dashboard_marketing_processed', file_name='processed_hotmart.parquet', file_type='.parquet')
-        raw_hotmart = pd.read_parquet(BytesIO(tmp_hotmart))
+        raw_hotmart = pd.read_parquet(BytesIO(tmp_hotmart), engine='pyarrow')
         raw_hotmart['count'] = 1
         st.session_state['hotmart_data'] = raw_hotmart
         hotmart = st.session_state['hotmart_data'] = raw_hotmart

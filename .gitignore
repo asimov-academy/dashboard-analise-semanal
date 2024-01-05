@@ -2,3 +2,4 @@ Temp_files/
 .streamlit/
 token_fb.txt
 .vscode/
+pages/ga4.py

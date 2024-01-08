@@ -50,8 +50,8 @@ if st.session_state["authentication_status"]:
         hotmart = st.session_state['hotmart_data'] = raw_hotmart
     
     ############# FILTRANDO OS DADOS ###########################################
-    date_range = st.date_input("Periodo atual", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates')
-    dates_benchmark_hotmart = st.sidebar.date_input("Periodo de para comparação", value=(datetime.today()-timedelta(days=14), datetime.today()-timedelta(days=8)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates_benchmark')
+    date_range = st.sidebar.date_input("Periodo atual", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates')
+    dates_benchmark_hotmart = st.date_input("Periodo de para comparação", value=(datetime.today()-timedelta(days=14), datetime.today()-timedelta(days=8)), max_value=datetime.today()-timedelta(days=1), min_value=hotmart['order_date'].min(), key='hotmart_dates_benchmark')
     limited_hotmart = hotmart.loc[(hotmart['order_date'] >= date_range[0]) & 
                                   (hotmart['order_date'] <= date_range[1]) & 
                                   (hotmart['status'].isin(['APPROVED','REFUNDED','COMPLETE']))] #desprezando compras canceladas

@@ -5,8 +5,14 @@ streamlit_authenticator
 pathlib
 google-cloud-storage
 google-auth-oauthlib
+google-cloud-bigquery
 google-auth
 millify
 numpy
 requests
 facebook_business
+db-dtypes
+requests
+plotly
+pdbpp
+pandas-gbq

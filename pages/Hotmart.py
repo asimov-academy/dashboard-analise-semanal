@@ -20,7 +20,10 @@ def get_metrics(df: pd.DataFrame, fb_data: pd.DataFrame) -> dict:
     metrics['refunds'] = len(df.loc[df['status'] == 'REFUNDED', 'transaction'].unique())
     metrics['avarage_ticket'] = metrics['billing'] / metrics['n_valid_sales']
     metrics['affiliates_sales'] = len(valid_df.loc[(valid_df['source'] == 'AFFILIATE'), 'transaction'])
+    transactions_by_affiliates = valid_df.loc[valid_df['source'] == 'AFFILIATE', 'transaction']
+    metrics['affiliates_revenue'] = valid_df.loc[(valid_df['transaction'].isin(transactions_by_affiliates)) & (valid_df['source'] == 'PRODUCER'), 'commission.value'].sum()
     metrics['sales_team_sales'] = len(valid_df.loc[valid_df['tracking.source_sck'] == 'vendas', 'transaction'])
+    metrics['sales_team_revenue'] = valid_df.loc[valid_df['tracking.source_sck'] == 'vendas', 'commission.value'].sum()
     metrics['profit'] = metrics['billing'] - fb_data['spend'].sum()
     return metrics
 
@@ -74,22 +77,25 @@ if st.session_state["authentication_status"]:
         st.metric('Ticket Médio', value=f'R$ {millify(current_metrics["avarage_ticket"], precision=1)}', delta=millify(current_metrics['avarage_ticket'] - benchmark_metrics['avarage_ticket'], precision=1))
     
     with col_2:
+        st.metric('Lucro aproximado', value=f'R${millify(current_metrics["profit"], precision=1)}', delta=millify(current_metrics['profit'] - benchmark_metrics['profit'], precision=1))
+        st.metric('ROAS aproximado', value=round(current_metrics['billing']/limited_fb['spend'].sum(),2))
+        st.metric('Faturamento - Time de vendas', value=f'R$ {millify(current_metrics["sales_team_revenue"], precision=1)}', delta=millify(current_metrics["sales_team_revenue"] - benchmark_metrics["sales_team_revenue"], precision=1))
+        st.metric('Faturamento - Afiliados', value=f'R$ {millify(current_metrics["affiliates_revenue"], precision=1)}', delta=millify(current_metrics["affiliates_revenue"] - benchmark_metrics["affiliates_revenue"], precision=1))
+
+    with col_3:
         st.metric('Vendas', value=current_metrics['n_sales'], delta=current_metrics['n_sales'] - benchmark_metrics['n_sales'])
         st.metric('Reembolsos', value=current_metrics['refunds'], delta= current_metrics['refunds'] - benchmark_metrics['refunds'], delta_color='inverse')
         st.metric('Time de vendas', value=current_metrics['sales_team_sales'], delta=current_metrics['sales_team_sales'] - benchmark_metrics['sales_team_sales'])
         st.metric('Afiliados', value=current_metrics['affiliates_sales'], delta=current_metrics['affiliates_sales'] - benchmark_metrics['affiliates_sales'])
 
-    with col_3:
-        st.metric('Lucro aproximado', value=f'R${millify(current_metrics["profit"], precision=1)}', delta=millify(current_metrics['profit'] - benchmark_metrics['profit'], precision=1))
-        st.metric('ROAS aproximado', value=round(current_metrics['billing']/limited_fb['spend'].sum(),2))
 
     ################## PLOT SCk ######################################
-    sck_figure = px.pie(data_frame=limited_hotmart.loc[limited_hotmart['status'] != 'REFUNDED'], values='count', names= 'tracking.source_sck', hole=0.5, 
+    sck_figure = px.pie(data_frame=limited_hotmart.loc[(limited_hotmart['status'] != 'REFUNDED') & (limited_hotmart['source'] == 'PRODUCER')], values='count', names= 'tracking.source_sck', hole=0.5, 
                         title='Distribuição das vendas por sck', height=600).update_traces(textinfo='percent+value')
     st.plotly_chart(sck_figure, use_container_width=True)
 
     ###################### PLOT PRODUCTS #############################
-    product_figure = px.pie(data_frame=limited_hotmart.loc[limited_hotmart['status'] != 'REFUNDED'], values='count', names='product_name', hole=0.5, 
+    product_figure = px.pie(data_frame=limited_hotmart.loc[(limited_hotmart['status'] != 'REFUNDED') & (limited_hotmart['source'] == 'PRODUCER')], values='count', names='product_name', hole=0.5, 
                             title='Produtos Vendidos', height=600).update_traces(textinfo='percent+value')
     st.plotly_chart(product_figure, use_container_width=True)
 

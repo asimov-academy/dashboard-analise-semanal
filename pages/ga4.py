@@ -105,6 +105,7 @@ with path_details:
         tmp[['utm_source_std', 'default_channel','utm_content']] = tmp[['utm_source_std', 'default_channel','utm_content']].astype(str)
         source_chart = px.sunburst(data_frame=tmp, title='Fontes de tráfego', values='count', path=['utm_source_std', 'default_channel', 'utm_content'], branchvalues='total', maxdepth=-1).update_traces(textinfo='label+value+percent entry')
         st.plotly_chart(source_chart, use_container_width=True)
+        st.write(tmp['count'].sum())
 
     with inner_col2:
         selected_channel = st.selectbox('Selecione um canal de tráfego', options=limited_ga4['default_channel'].unique())
@@ -133,22 +134,26 @@ with trails_expander:
         tmp[['utm_source_std', 'default_channel','utm_content']] = tmp[['utm_source_std', 'default_channel','utm_content']].astype(str)
         dip_chart = px.sunburst(data_frame=tmp, title='DIP', values='count', path=['utm_source_std', 'default_channel', 'utm_content'], branchvalues='total', maxdepth=-1).update_traces(textinfo='label+value+percent entry')
         st.plotly_chart(dip_chart, use_container_width=True)
+        st.write(tmp['count'].sum())
     
     with tcol_2:
         tmp = pyof[['utm_source_std', 'default_channel','utm_content','count']].groupby(by=['utm_source_std', 'default_channel','utm_content'], observed=True).sum().reset_index()
         tmp[['utm_source_std', 'default_channel','utm_content']] = tmp[['utm_source_std', 'default_channel','utm_content']].astype(str)
         pyof_chart = px.sunburst(data_frame=tmp, title='Python Office', values='count', path=['utm_source_std', 'default_channel', 'utm_content'], branchvalues='total', maxdepth=-1).update_traces(textinfo='label+value+percent entry')
         st.plotly_chart(pyof_chart, use_container_width=True)
+        st.write(tmp['count'].sum())
     
     with tcol_3:
         tmp = dsml[['utm_source_std', 'default_channel','utm_content','count']].groupby(by=['utm_source_std', 'default_channel','utm_content'], observed=True).sum().reset_index()
         tmp[['utm_source_std', 'default_channel','utm_content']] = tmp[['utm_source_std', 'default_channel','utm_content']].astype(str)
         dsml_chart = px.sunburst(data_frame=tmp, title='DSML', values='count', path=['utm_source_std', 'default_channel', 'utm_content'], branchvalues='total', maxdepth=-1).update_traces(textinfo='label+value+percent entry')
-        st.plotly_chart(dsml_chart, use_container_width=True)   
+        st.plotly_chart(dsml_chart, use_container_width=True)
+        st.write(tmp['count'].sum())   
     
     with tcol_4:
         tmp = quant[['utm_source_std', 'default_channel','utm_content','count']].groupby(by=['utm_source_std', 'default_channel','utm_content'], observed=True).sum().reset_index()
         tmp[['utm_source_std', 'default_channel','utm_content']] = tmp[['utm_source_std', 'default_channel','utm_content']].astype(str)
         quant_chart = px.sunburst(data_frame=tmp, title='Quant', values='count', path=['utm_source_std', 'default_channel', 'utm_content'], branchvalues='total', maxdepth=-1).update_traces(textinfo='label+value+percent entry')
         st.plotly_chart(quant_chart, use_container_width=True)
+        st.write(tmp['count'].sum())
 

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from millify import millify
 import plotly.express as px
-from analise_dash import fb
+#from analise_dash import fb
 
 def get_metrics(df: pd.DataFrame, fb_data: pd.DataFrame) -> dict:
     """
@@ -60,6 +60,7 @@ if st.session_state["authentication_status"]:
                             (hotmart['order_date'] <= dates_benchmark_hotmart[1]) & 
                             (hotmart['status'].isin(['APPROVED','REFUNDED','COMPLETE']))] #desprezando compras canceladas
 
+    fb = st.session_state['fb']
     limited_fb = fb.loc[(fb['date'] >= date_range[0]) & (fb['date'] <= date_range[1])]
     benchmark_fb = fb.loc[(fb['date'] >= dates_benchmark_hotmart[0]) & (fb['date'] <= dates_benchmark_hotmart[1])]
     ################ CALCULOS #######################################################

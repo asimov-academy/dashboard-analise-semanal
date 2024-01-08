@@ -56,8 +56,8 @@ except KeyError:
 
 ga4['count'] = 1
 ########################## FILTERS ###############################################
-date_range = st.sidebar.date_input("Periodo atual", value=(datetime.today()-timedelta(days=7), datetime.today()-timedelta(days=1)), max_value=datetime.today()-timedelta(days=1), min_value=ga4['event_date'].min(), key='ga4_dates')
-dates_range_benchmark = st.date_input("Periodo de para comparação", value=(datetime.today()-timedelta(days=14), datetime.today()-timedelta(days=8)), max_value=datetime.today()-timedelta(days=1), min_value=ga4['event_date'].min(), key='ga4_dates_benchmark')
+date_range = st.sidebar.date_input("Periodo atual", value=(ga4['event_date'].max() - timedelta(days=6), ga4['event_date'].max()), max_value=ga4['event_date'].max(), min_value=ga4['event_date'].min(), key='ga4_dates')
+dates_range_benchmark = st.date_input("Periodo de para comparação", value=(ga4['event_date'].max()-timedelta(days=13), ga4['event_date'].max()-timedelta(days=7)), max_value=ga4['event_date'].max(), min_value=ga4['event_date'].min(), key='ga4_dates_benchmark')
 limited_ga4 = ga4.loc[(ga4['event_date'].dt.date >= date_range[0]) & (ga4['event_date'].dt.date <= date_range[1])]
 limited_benchmark = ga4.loc[(ga4['event_date'].dt.date >= dates_range_benchmark[0]) & (ga4['event_date'].dt.date <= dates_range_benchmark[1])]
 
